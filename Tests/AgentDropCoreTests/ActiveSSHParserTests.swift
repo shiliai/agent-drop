@@ -37,4 +37,15 @@ final class ActiveSSHParserTests: XCTestCase {
 
         XCTAssertEqual(targets.map(\.connectName), ["devbox", "work-ubuntu"])
     }
+
+    func testSkipsValueTakingOptionsBeforeHost() {
+        let lines = [
+            "ssh -F ~/.ssh/alt_config devbox",
+            "ssh -S /tmp/ssh-control work-ubuntu"
+        ]
+
+        let targets = ActiveSSHParser().parseProcessCommands(lines)
+
+        XCTAssertEqual(targets.map(\.connectName), ["devbox", "work-ubuntu"])
+    }
 }

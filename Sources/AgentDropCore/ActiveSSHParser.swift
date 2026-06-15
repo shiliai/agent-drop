@@ -10,12 +10,16 @@ public struct ActiveSSHParser {
     private func parseCommand(_ command: String) -> SSHTarget? {
         let tokens = tokenize(command)
         guard tokens.first.map(isSSHExecutable) == true else { return nil }
+        let optionsWithRequiredValue: Set<String> = [
+            "-B", "-b", "-c", "-D", "-E", "-e", "-F", "-I", "-i", "-J",
+            "-L", "-l", "-m", "-O", "-o", "-p", "-Q", "-R", "-S", "-W", "-w"
+        ]
 
         var index = 1
         while index < tokens.count {
             let token = tokens[index]
 
-            if ["-p", "-i", "-l", "-o", "-L", "-R", "-D", "-J"].contains(token) {
+            if optionsWithRequiredValue.contains(token) {
                 index += 2
                 continue
             }
