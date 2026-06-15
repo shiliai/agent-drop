@@ -47,4 +47,29 @@ public enum FileSelection {
 
         return FileSelectionResult(files: files, rejected: rejected)
     }
+
+    public static func cliFailureMessages(for selection: FileSelectionResult) -> [String] {
+        var messages = selection.rejected.map { rejected in
+            "Rejected file \(rejected.url.path): \(rejected.reason.cliDescription)"
+        }
+
+        if selection.files.isEmpty {
+            messages.append("No supported files selected.")
+        }
+
+        return messages
+    }
+}
+
+private extension RejectionReason {
+    var cliDescription: String {
+        switch self {
+        case .missing:
+            return "missing"
+        case .directoryUnsupported:
+            return "directory unsupported"
+        case .notRegularFile:
+            return "not a regular file"
+        }
+    }
 }

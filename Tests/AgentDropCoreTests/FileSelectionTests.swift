@@ -54,6 +54,31 @@ final class FileSelectionTests: XCTestCase {
         XCTAssertEqual(result.rejected.map(\.url), [fifo])
         XCTAssertEqual(result.rejected.map(\.reason), [.notRegularFile])
     }
+
+    func testCLIValidationFailsWhenAnyRejectedFilesExist() throws {
+        let root = try temporaryDirectory()
+        let accepted = root.appendingPathComponent("demo.png")
+        let missing = root.appendingPathComponent("missing.png")
+        FileManager.default.createFile(atPath: accepted.path, contents: Data("image".utf8))
+
+        let selection = FileSelection.validate([accepted, missing])
+
+        XCTAssertEqual(FileSelection.cliFailureMessages(for: selection), [
+            "Rejected file \(missing.path): missing"
+        ])
+    }
+
+    func testCLIValidationPreservesNoSupportedFilesMessage() throws {
+        let root = try temporaryDirectory()
+        let missing = root.appendingPathComponent("missing.png")
+
+        let selection = FileSelection.validate([missing])
+
+        XCTAssertEqual(FileSelection.cliFailureMessages(for: selection), [
+            "Rejected file \(missing.path): missing",
+            "No supported files selected."
+        ])
+    }
 }
 
 private func temporaryDirectory() throws -> URL {
