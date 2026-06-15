@@ -15,6 +15,7 @@ targets:
     platform: macOS
     sources:
       - Sources/AgentDropApp
+      - Sources/AgentDropApp/Assets.xcassets
     dependencies:
       - target: AgentDropFinderSync
         embed: true
@@ -31,6 +32,7 @@ targets:
     productName: AgentDropFinderSync
     sources:
       - Sources/AgentDropFinderSync
+      - Sources/AgentDropApp/Assets.xcassets
     dependencies:
       - package: AgentDropPackage
         product: AgentDropCore
