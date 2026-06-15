@@ -8,8 +8,8 @@ public struct ActiveSSHParser {
     }
 
     private func parseCommand(_ command: String) -> SSHTarget? {
-        let tokens = command.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-        guard tokens.first == "ssh" else { return nil }
+        let tokens = tokenize(command)
+        guard tokens.first.map(isSSHExecutable) == true else { return nil }
 
         var index = 1
         while index < tokens.count {
@@ -29,5 +29,63 @@ public struct ActiveSSHParser {
         }
 
         return nil
+    }
+
+    private func isSSHExecutable(_ token: String) -> Bool {
+        token.split(separator: "/").last == "ssh"
+    }
+
+    private func tokenize(_ command: String) -> [String] {
+        var tokens: [String] = []
+        var current = ""
+        var quote: Character?
+        var escaping = false
+
+        for character in command {
+            if escaping {
+                current.append(character)
+                escaping = false
+                continue
+            }
+
+            if character == "\\" {
+                escaping = true
+                continue
+            }
+
+            if let activeQuote = quote {
+                if character == activeQuote {
+                    quote = nil
+                } else {
+                    current.append(character)
+                }
+                continue
+            }
+
+            if character == "'" || character == "\"" {
+                quote = character
+                continue
+            }
+
+            if character == " " || character == "\t" {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current = ""
+                }
+                continue
+            }
+
+            current.append(character)
+        }
+
+        if escaping {
+            current.append("\\")
+        }
+
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+
+        return tokens
     }
 }

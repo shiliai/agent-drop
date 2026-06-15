@@ -88,6 +88,8 @@ swift run agent-drop targets
 swift run agent-drop send --target devbox ./demo.png
 ```
 
+Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
+
 The Finder extension may need to be enabled in System Settings after building the app locally.
 
 ## Status

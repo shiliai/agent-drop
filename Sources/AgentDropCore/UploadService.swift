@@ -30,7 +30,7 @@ public final class UploadService {
         var uploaded: [UploadedFile] = []
 
         for file in files {
-            let remoteName = try chooseRemoteName(for: file.lastPathComponent, target: target)
+            let remoteName = try reserveRemoteName(for: file.lastPathComponent, target: target)
             let relativePath = inboxPath.relativeDirectory + "/" + remoteName
             let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
 
@@ -67,22 +67,24 @@ public final class UploadService {
         }
     }
 
-    private func chooseRemoteName(for originalName: String, target: SSHTarget) throws -> String {
+    private func reserveRemoteName(for originalName: String, target: SSHTarget) throws -> String {
         for candidate in RemoteNamePlanner(originalName: originalName).candidates(prefixCount: 100) {
             let relativePath = inboxPath.relativeDirectory + "/" + candidate
             let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
             let result = try runner.run(CommandInvocation(
                 executable: "/usr/bin/ssh",
-                arguments: [target.connectName, "test -e \(commandPath)"]
+                arguments: [target.connectName, "if ( set -C; : > \(commandPath) ) 2>/dev/null; then exit 0; fi; test -e \(commandPath) && exit 1; exit 2"]
             ))
 
-            if result.exitCode == 1 {
+            if result.exitCode == 0 {
                 return candidate
             }
 
-            if result.exitCode != 0 {
-                throw UploadError.remoteExistenceCheckFailed(result.stderr)
+            if result.exitCode == 1 {
+                continue
             }
+
+            throw UploadError.remoteExistenceCheckFailed(result.stderr)
         }
 
         throw UploadError.noAvailableRemoteName(originalName)

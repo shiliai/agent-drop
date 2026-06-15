@@ -26,4 +26,15 @@ final class ActiveSSHParserTests: XCTestCase {
 
         XCTAssertEqual(targets.map(\.connectName), ["devbox"])
     }
+
+    func testParsesPathInvokedSSHAndQuotedOptionValues() {
+        let lines = [
+            "/usr/bin/ssh devbox",
+            "ssh -o ProxyCommand='ssh jump %h %p' work-ubuntu"
+        ]
+
+        let targets = ActiveSSHParser().parseProcessCommands(lines)
+
+        XCTAssertEqual(targets.map(\.connectName), ["devbox", "work-ubuntu"])
+    }
 }

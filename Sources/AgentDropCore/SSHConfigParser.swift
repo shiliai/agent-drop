@@ -26,12 +26,14 @@ public struct SSHConfigParser {
         var targets: [SSHTarget] = []
 
         for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = rawLine.trimmingCharacters(in: .whitespaces)
-            guard trimmed.lowercased().hasPrefix("host ") else { continue }
+            let trimmed = rawLine
+                .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+                .first?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            let fields = trimmed.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard fields.first?.lowercased() == "host" else { continue }
 
-            let names = trimmed.dropFirst(5)
-                .split(whereSeparator: { $0 == " " || $0 == "\t" })
-                .map(String.init)
+            let names = fields.dropFirst()
                 .filter { !$0.contains("*") && !$0.contains("?") && !$0.contains("!") }
 
             for name in names {

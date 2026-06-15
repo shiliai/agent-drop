@@ -31,4 +31,17 @@ final class SSHConfigParserTests: XCTestCase {
 
         XCTAssertEqual(targets.map(\.name), ["devbox"])
     }
+
+    func testParsesTabbedHostAndIgnoresInlineComments() {
+        let config = """
+        Host	devbox # personal machine
+          HostName 192.168.1.20
+
+        Host gpu-box *.local !blocked work-ubuntu
+        """
+
+        let targets = SSHConfigParser().parse(config)
+
+        XCTAssertEqual(targets.map(\.name), ["devbox", "gpu-box", "work-ubuntu"])
+    }
 }
