@@ -33,23 +33,17 @@ You can then paste those paths into an existing SSH terminal for Codex, Claude C
 - Avoid overwrites by renaming conflicts, for example `demo-2.png`.
 - Copy final remote file paths, including filenames, to the Mac clipboard.
 
-## Planned CLI
+## CLI Usage
 
-The Finder integration will use the CLI as its core helper:
+Agent Drop includes a CLI for checking dependencies, listing SSH targets, and sending files to an explicit target:
 
 ```bash
 agent-drop targets
-agent-drop send --target devbox file.png spec.pdf
 agent-drop doctor
+agent-drop send --target <target> <files...>
 ```
 
-Interactive CLI use may also be supported:
-
-```bash
-agent-drop send file.png
-```
-
-In that mode, Agent Drop can ask which SSH target to use.
+The CLI does not implement an interactive target picker.
 
 ## Not In V1
 
@@ -66,6 +60,36 @@ The current V1 design is documented in:
 
 [docs/superpowers/specs/2026-06-15-agent-drop-design.md](docs/superpowers/specs/2026-06-15-agent-drop-design.md)
 
+## Development
+
+Run the core tests:
+
+```bash
+swift test
+```
+
+Generate the Xcode project:
+
+```bash
+xcodegen generate
+```
+
+Build the app and Finder Sync extension:
+
+```bash
+xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug build CODE_SIGNING_ALLOWED=NO
+```
+
+Run the CLI during development:
+
+```bash
+swift run agent-drop doctor
+swift run agent-drop targets
+swift run agent-drop send --target devbox ./demo.png
+```
+
+The Finder extension may need to be enabled in System Settings after building the app locally.
+
 ## Status
 
-Agent Drop is in the design stage. The repository currently contains the V1 product and implementation direction, with development planned on a separate branch after the initial `main` setup.
+Agent Drop V1 is implemented on this branch. The repository includes the Swift package/core, CLI, macOS app, Finder Sync extension, core tests, XcodeGen project configuration, and documented local test/build workflow.
