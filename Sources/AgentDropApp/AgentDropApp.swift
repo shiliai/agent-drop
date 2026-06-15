@@ -4,16 +4,19 @@ import SwiftUI
 struct AgentDropApp: App {
     var body: some Scene {
         WindowGroup {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 16) {
                 Text("Agent Drop")
                     .font(.title)
-                Text("Finder extension and CLI helper for sending files to remote SSH agent inboxes.")
+                Text("Right-click files in Finder, choose Agent Drop, then choose an SSH target.")
                     .foregroundStyle(.secondary)
-                Text("Enable the Finder extension in System Settings if it is not visible in Finder.")
+                Text("Uploaded files land in ~/.agent-inbox/YYYY-MM-DD/ on the remote machine. The final remote paths are copied to your Mac clipboard.")
                     .foregroundStyle(.secondary)
+                Button("Open Extensions Settings") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences")!)
+                }
             }
             .padding(24)
-            .frame(width: 520, height: 220)
+            .frame(width: 560, height: 260)
         }
     }
 }
