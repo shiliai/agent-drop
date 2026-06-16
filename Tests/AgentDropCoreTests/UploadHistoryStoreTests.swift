@@ -49,7 +49,8 @@ final class UploadHistoryStoreTests: XCTestCase {
     func testCorruptJSONIsPreservedAndHistoryResets() throws {
         let root = try temporaryDirectory()
         let historyURL = root.appendingPathComponent("upload-history.json")
-        try Data("not-json".utf8).write(to: historyURL)
+        let corruptData = Data("not-json".utf8)
+        try corruptData.write(to: historyURL)
         let store = UploadHistoryStore(historyFileURL: historyURL)
 
         let loaded = try store.load()
@@ -57,7 +58,25 @@ final class UploadHistoryStoreTests: XCTestCase {
         XCTAssertEqual(loaded, [])
         let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
         XCTAssertTrue(files.contains("upload-history.json"))
-        XCTAssertTrue(files.contains { $0.hasPrefix("upload-history.json.corrupt-") })
+        let corruptBackupName = try XCTUnwrap(files.first { $0.hasPrefix("upload-history.json.corrupt-") })
+        let corruptBackupURL = root.appendingPathComponent(corruptBackupName)
+        XCTAssertEqual(try Data(contentsOf: corruptBackupURL), corruptData)
+        let resetData = try Data(contentsOf: historyURL)
+        XCTAssertEqual(try JSONDecoder.agentDropHistory.decode([UploadHistoryEntry].self, from: resetData), [])
+    }
+
+    func testFilesystemReadErrorsAreNotTreatedAsCorruptJSON() throws {
+        let root = try temporaryDirectory()
+        let historyURL = root.appendingPathComponent("upload-history.json")
+        try FileManager.default.createDirectory(at: historyURL, withIntermediateDirectories: true)
+        let store = UploadHistoryStore(historyFileURL: historyURL)
+
+        XCTAssertThrowsError(try store.load())
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: historyURL.path, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+        XCTAssertFalse(files.contains { $0.hasPrefix("upload-history.json.corrupt-") })
     }
 
     private func entry(id: String, createdAt: TimeInterval, targetName: String) -> UploadHistoryEntry {

@@ -26,11 +26,11 @@ public final class UploadHistoryStore {
             return []
         }
 
+        let data = try Data(contentsOf: historyFileURL)
         do {
-            let data = try Data(contentsOf: historyFileURL)
             let entries = try JSONDecoder.agentDropHistory.decode([UploadHistoryEntry].self, from: data)
             return sortedAndTrimmed(entries)
-        } catch {
+        } catch is DecodingError {
             try preserveCorruptHistory()
             try write([])
             return []
