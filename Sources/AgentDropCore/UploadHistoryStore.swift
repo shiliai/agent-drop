@@ -1,9 +1,10 @@
 import Foundation
 
-public final class UploadHistoryStore {
+public final class UploadHistoryStore: @unchecked Sendable {
     private let historyFileURL: URL
     private let limit: Int
     private let fileManager: FileManager
+    private let queue = DispatchQueue(label: "ai.shili.AgentDrop.UploadHistoryStore")
 
     public init(
         historyFileURL: URL = UploadHistoryStore.defaultHistoryFileURL(),
@@ -22,6 +23,20 @@ public final class UploadHistoryStore {
     }
 
     public func load() throws -> [UploadHistoryEntry] {
+        try queue.sync {
+            try loadUnlocked()
+        }
+    }
+
+    public func append(_ entry: UploadHistoryEntry) throws {
+        try queue.sync {
+            var entries = try loadUnlocked()
+            entries.insert(entry, at: 0)
+            try write(sortedAndTrimmed(entries))
+        }
+    }
+
+    private func loadUnlocked() throws -> [UploadHistoryEntry] {
         guard fileManager.fileExists(atPath: historyFileURL.path) else {
             return []
         }
@@ -35,12 +50,6 @@ public final class UploadHistoryStore {
             try write([])
             return []
         }
-    }
-
-    public func append(_ entry: UploadHistoryEntry) throws {
-        var entries = try load()
-        entries.insert(entry, at: 0)
-        try write(sortedAndTrimmed(entries))
     }
 
     private func sortedAndTrimmed(_ entries: [UploadHistoryEntry]) -> [UploadHistoryEntry] {
