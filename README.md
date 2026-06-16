@@ -101,7 +101,7 @@ test -n "$APP_SRC"
 pkill -x AgentDrop || true
 pkill -x AgentDropFinderSync || true
 rm -rf "$APP_DEST"
-cp -R "$APP_SRC" "$APP_DEST"
+/usr/bin/ditto "$APP_SRC" "$APP_DEST"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R -trusted "$APP_DEST"
 xcrun pluginkit -a "$APP_DEST/Contents/PlugIns/AgentDropFinderSync.appex" || true
 xcrun pluginkit -e use -i ai.shili.AgentDrop.FinderSync || true

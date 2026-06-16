@@ -13,6 +13,20 @@ final class UploadHistoryStoreTests: XCTestCase {
         )
     }
 
+    func testHistoryFileURLUsesContainerRelativePathWhenHomeIsAlreadyFinderExtensionContainer() {
+        let containerHome = URL(
+            fileURLWithPath: "/Users/chris/Library/Containers/ai.shili.AgentDrop.FinderSync/Data",
+            isDirectory: true
+        )
+
+        let url = UploadHistoryStore.defaultHistoryFileURL(home: containerHome)
+
+        XCTAssertEqual(
+            url.path,
+            "/Users/chris/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json"
+        )
+    }
+
     func testReadingMissingHistoryReturnsEmptyList() throws {
         let root = try temporaryDirectory()
         let store = UploadHistoryStore(historyFileURL: root.appendingPathComponent("upload-history.json"))

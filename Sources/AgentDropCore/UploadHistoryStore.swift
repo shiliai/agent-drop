@@ -1,6 +1,7 @@
 import Foundation
 
 public final class UploadHistoryStore: @unchecked Sendable {
+    private static let finderExtensionContainerPath = "/Library/Containers/ai.shili.AgentDrop.FinderSync/Data"
     private let historyFileURL: URL
     private let limit: Int
     private let fileManager: FileManager
@@ -17,8 +18,15 @@ public final class UploadHistoryStore: @unchecked Sendable {
     }
 
     public static func defaultHistoryFileURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
-        home
-            .appendingPathComponent("Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop", isDirectory: true)
+        let baseDirectory = home.path.hasSuffix(finderExtensionContainerPath)
+            ? home
+            : home.appendingPathComponent(
+                "Library/Containers/ai.shili.AgentDrop.FinderSync/Data",
+                isDirectory: true
+            )
+
+        return baseDirectory
+            .appendingPathComponent("Library/Application Support/Agent Drop", isDirectory: true)
             .appendingPathComponent("upload-history.json", isDirectory: false)
     }
 
