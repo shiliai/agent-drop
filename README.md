@@ -130,9 +130,8 @@ Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
 - On upload success or failure, Finder badges the selected file briefly.
 - The extension writes diagnostics to
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`.
-- macOS notification delivery from Finder Sync is best-effort. A reliable
-  in-app upload history and feedback surface is tracked in
-  [issue #2](https://github.com/shiliai/agent-drop/issues/2).
+- macOS notification delivery from Finder Sync is best-effort. The app's
+  `Recent Uploads` view is the reliable feedback and history surface.
 
 ## Upload History
 
@@ -140,7 +139,7 @@ Agent Drop records recent Finder uploads in the Finder extension container:
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-The app reads that file to show `Recent Uploads`. Successful rows include
+The app reads that file to show `Recent Uploads`. Successful entries show
 remote paths that can be copied again. Failed rows include a short error.
 
 For this developer build path, the containing app is intentionally
