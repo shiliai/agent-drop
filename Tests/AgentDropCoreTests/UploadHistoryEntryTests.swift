@@ -56,6 +56,44 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertNil(entry.copyPayload)
     }
 
+    func testBuildsSucceededEntryFromUploadedFiles() {
+        let uploaded = [
+            UploadedFile(
+                localURL: URL(fileURLWithPath: "/tmp/demo.png"),
+                remoteDisplayPath: "~/.agent-inbox/2026-06-15/demo.png"
+            )
+        ]
+
+        let entry = UploadHistoryEntry.succeeded(
+            targetName: "x570",
+            uploadedFiles: uploaded,
+            createdAt: Date(timeIntervalSince1970: 123),
+            id: UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        )
+
+        XCTAssertEqual(entry.status, .succeeded)
+        XCTAssertEqual(entry.targetName, "x570")
+        XCTAssertEqual(entry.localFileNames, ["demo.png"])
+        XCTAssertEqual(entry.remoteDisplayPaths, ["~/.agent-inbox/2026-06-15/demo.png"])
+        XCTAssertNil(entry.errorMessage)
+    }
+
+    func testBuildsFailedEntryFromSelectedFiles() {
+        let entry = UploadHistoryEntry.failed(
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/demo.png")],
+            errorDescription: String(repeating: "x", count: 180),
+            createdAt: Date(timeIntervalSince1970: 123),
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+        )
+
+        XCTAssertEqual(entry.status, .failed)
+        XCTAssertEqual(entry.targetName, "x570")
+        XCTAssertEqual(entry.localFileNames, ["demo.png"])
+        XCTAssertEqual(entry.remoteDisplayPaths, [])
+        XCTAssertEqual(entry.errorMessage, String(repeating: "x", count: 117) + "...")
+    }
+
     func testFailureMessageTrimsLeadingAndTrailingWhitespaceForHistoryDisplay() {
         XCTAssertEqual(
             UploadHistoryEntry.shortErrorMessage(from: "  rsync failed\n"),

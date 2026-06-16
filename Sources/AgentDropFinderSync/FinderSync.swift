@@ -10,6 +10,7 @@ private let failureBadgeIdentifier = "agent-drop-failure"
 
 final class FinderSync: FIFinderSync {
     private let runner = ProcessCommandRunner()
+    private let historyStore = UploadHistoryStore()
     private let home: URL
 
     override init() {
@@ -79,6 +80,8 @@ final class FinderSync: FIFinderSync {
                 defer { try? staged.cleanup() }
                 Self.recordDiagnostic("upload staged target=\(target.connectName) directory=\(staged.directory.path) files=\(staged.files.map(\.sourceURL.lastPathComponent).joined(separator: ", "))")
                 let uploaded = try UploadService(runner: self.runner).upload(sources: staged.files, target: target, copyToClipboard: false)
+                let entry = UploadHistoryEntry.succeeded(targetName: target.name, uploadedFiles: uploaded)
+                Self.recordHistory(entry, store: self.historyStore)
                 let remotePaths = uploaded.map(\.remoteDisplayPath).joined(separator: "\n")
                 let copied = Self.copyToPasteboard(remotePaths)
                 let body = UploadFeedbackFormatter.success(fileCount: uploaded.count, targetName: target.name, copiedPaths: copied)
@@ -87,6 +90,12 @@ final class FinderSync: FIFinderSync {
                 Self.notify(title: copied ? "Agent Drop" : "Agent Drop uploaded", body: body)
             } catch {
                 Self.recordDiagnostic("upload failed target=\(target.connectName) error=\(String(describing: error))")
+                let entry = UploadHistoryEntry.failed(
+                    targetName: target.name,
+                    fileURLs: selection.files,
+                    errorDescription: String(describing: error)
+                )
+                Self.recordHistory(entry, store: self.historyStore)
                 Self.markFiles(selection.files, badgeIdentifier: failureBadgeIdentifier)
                 Self.notify(title: "Agent Drop failed", body: UploadFeedbackFormatter.failure(targetName: target.name, errorDescription: String(describing: error)))
             }
@@ -192,6 +201,15 @@ final class FinderSync: FIFinderSync {
             }
             guard home[0] != 0 else { return nil }
             return String(cString: home)
+        }
+    }
+
+    private static func recordHistory(_ entry: UploadHistoryEntry, store: UploadHistoryStore) {
+        do {
+            try store.append(entry)
+            recordDiagnostic("history recorded id=\(entry.id.uuidString) status=\(entry.status.rawValue)")
+        } catch {
+            recordDiagnostic("history failed id=\(entry.id.uuidString) error=\(String(describing: error))")
         }
     }
 

@@ -63,3 +63,40 @@ public extension JSONDecoder {
         return decoder
     }
 }
+
+public extension UploadHistoryEntry {
+    static func succeeded(
+        targetName: String,
+        uploadedFiles: [UploadedFile],
+        createdAt: Date = Date(),
+        id: UUID = UUID()
+    ) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id,
+            createdAt: createdAt,
+            targetName: targetName,
+            status: .succeeded,
+            localFileNames: uploadedFiles.map { $0.localURL.lastPathComponent },
+            remoteDisplayPaths: uploadedFiles.map(\.remoteDisplayPath),
+            errorMessage: nil
+        )
+    }
+
+    static func failed(
+        targetName: String,
+        fileURLs: [URL],
+        errorDescription: String,
+        createdAt: Date = Date(),
+        id: UUID = UUID()
+    ) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id,
+            createdAt: createdAt,
+            targetName: targetName,
+            status: .failed,
+            localFileNames: fileURLs.map(\.lastPathComponent),
+            remoteDisplayPaths: [],
+            errorMessage: shortErrorMessage(from: errorDescription)
+        )
+    }
+}
