@@ -50,17 +50,95 @@ final class UploadServiceTests: XCTestCase {
         XCTAssertEqual(clipboard.text, "~/.agent-inbox/2026-06-15/demo-2.png")
     }
 
+    func testCanUploadWithoutWritingClipboard() throws {
+        let file = URL(fileURLWithPath: "/tmp/demo.png")
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        let uploaded = try service.upload(files: [file], target: SSHTarget(name: "devbox", source: .config), copyToClipboard: false)
+
+        XCTAssertEqual(uploaded.map(\.remoteDisplayPath), ["~/.agent-inbox/2026-06-15/demo.png"])
+        XCTAssertNil(clipboard.text)
+        XCTAssertEqual(runner.invocations.map(\.executable), ["/usr/bin/ssh", "/usr/bin/ssh", "/usr/bin/rsync"])
+    }
+
+    func testUploadsStagedSourceUsingOriginalRemoteName() throws {
+        let source = UploadSourceFile(
+            sourceURL: URL(fileURLWithPath: "/tmp/AgentDropUploads/fixed/0-demo.png"),
+            remoteName: "demo.png"
+        )
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        let uploaded = try service.upload(sources: [source], target: SSHTarget(name: "devbox", source: .config), copyToClipboard: false)
+
+        XCTAssertEqual(uploaded.map(\.remoteDisplayPath), ["~/.agent-inbox/2026-06-15/demo.png"])
+        XCTAssertEqual(runner.invocations[1].arguments[1], "if ( set -C; : > $HOME/'.agent-inbox/2026-06-15/demo.png' ) 2>/dev/null; then exit 0; fi; test -e $HOME/'.agent-inbox/2026-06-15/demo.png' && exit 1; exit 2")
+        XCTAssertEqual(runner.invocations[2], CommandInvocation(
+            executable: "/usr/bin/rsync",
+            arguments: ["-a", "/tmp/AgentDropUploads/fixed/0-demo.png", "devbox:$HOME/'.agent-inbox/2026-06-15/demo.png'"]
+        ))
+    }
+
     func testDoesNotWriteClipboardWhenUploadFails() {
         let file = URL(fileURLWithPath: "/tmp/demo.png")
         let runner = FakeCommandRunner(results: [
             .success(stdout: "", stderr: ""),
             .success(stdout: "", stderr: ""),
-            .failure(exitCode: 23, stdout: "", stderr: "rsync failed")
+            .failure(exitCode: 23, stdout: "", stderr: "rsync failed"),
+            .success(stdout: "", stderr: "")
         ])
         let clipboard = FakeClipboard()
         let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
 
         XCTAssertThrowsError(try service.upload(files: [file], target: SSHTarget(name: "devbox", source: .config)))
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testClipboardFailurePreservesReason() {
+        let file = URL(fileURLWithPath: "/tmp/demo.png")
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard(error: ClipboardError.writeFailed("pasteboard unavailable"))
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        XCTAssertThrowsError(try service.upload(files: [file], target: SSHTarget(name: "devbox", source: .config))) { error in
+            XCTAssertEqual(error as? UploadError, .clipboardFailed("pasteboard unavailable"))
+        }
+    }
+
+    func testRemovesReservedRemoteNameWhenRsyncFails() {
+        let file = URL(fileURLWithPath: "/tmp/demo.png")
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .failure(exitCode: 23, stdout: "", stderr: "rsync failed"),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        XCTAssertThrowsError(try service.upload(files: [file], target: SSHTarget(name: "devbox", source: .config))) { error in
+            XCTAssertEqual(error as? UploadError, .rsyncFailed("rsync failed"))
+        }
+
+        XCTAssertEqual(runner.invocations.last, CommandInvocation(
+            executable: "/usr/bin/ssh",
+            arguments: ["devbox", "rm -f -- $HOME/'.agent-inbox/2026-06-15/demo.png'"]
+        ))
         XCTAssertNil(clipboard.text)
     }
 
@@ -102,7 +180,16 @@ final class UploadServiceTests: XCTestCase {
 
 private final class FakeClipboard: ClipboardWriting {
     var text: String?
+    var error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
     func write(_ text: String) throws {
+        if let error {
+            throw error
+        }
         self.text = text
     }
 }

@@ -1805,3 +1805,36 @@ git commit -m "fix: address end-to-end upload issues"
 ```
 
 If no source changes were needed, do not create an empty commit.
+
+---
+
+## Local Development Signing And Finder Verification Notes
+
+The Finder Sync extension requires a locally signed app/extension pair for
+reliable Finder loading during development. The local development setup uses:
+
+- Apple Development signing.
+- One Team for both `AgentDrop` and `AgentDropFinderSync`.
+- App sandbox plus network client entitlement on both targets.
+- Finder extension read access for user-selected files and the local `~/.ssh`
+  config path.
+
+Verified local Finder path on 2026-06-16:
+
+- Build: `xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug build`.
+- Installed to `~/Applications/Agent Drop.app`.
+- Extension registered with `pluginkit` and enabled in System Settings.
+- Finder right-click menu loaded as `Agent Drop -> x570 config`.
+- Upload of `/Users/chris/Downloads/agent-drop-ui-test.png` to `x570`
+  created `/home/chriswang/.agent-inbox/2026-06-16/agent-drop-ui-test.png`.
+- Clipboard contained `~/.agent-inbox/2026-06-16/agent-drop-ui-test.png`.
+
+Current feedback behavior:
+
+- Finder menu includes a template upload icon.
+- Success/failure set a short-lived Finder badge on selected files.
+- The extension records upload diagnostics in
+  `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`.
+- System notifications are best-effort from the Finder Sync extension and were
+  not visible during local testing. Reliable in-app upload history and feedback
+  is deferred to issue #2.

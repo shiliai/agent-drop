@@ -25,7 +25,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.shili.AgentDrop
         INFOPLIST_FILE: Sources/AgentDropApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/AgentDropApp/AgentDrop.entitlements
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: XHU4389N7L
   AgentDropFinderSync:
     type: app-extension
     platform: macOS
@@ -40,5 +42,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ai.shili.AgentDrop.FinderSync
         INFOPLIST_FILE: Sources/AgentDropFinderSync/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/AgentDropFinderSync/AgentDropFinderSync.entitlements
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: XHU4389N7L
         SKIP_INSTALL: YES

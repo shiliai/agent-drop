@@ -74,11 +74,44 @@ Generate the Xcode project:
 xcodegen generate
 ```
 
-Build the app and Finder Sync extension:
+Build the app and Finder Sync extension without signing checks:
 
 ```bash
 xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug build CODE_SIGNING_ALLOWED=NO
 ```
+
+For local Finder Sync testing, use Xcode automatic signing with an Apple
+Development certificate. Both the app target and Finder Sync extension target
+should use the same Team. The checked-in `project.yml` contains the development
+team and entitlements used for this local flow.
+
+Build a signed Debug app:
+
+```bash
+xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug build
+```
+
+Install the signed app locally:
+
+```bash
+APP_SRC="$(find "$HOME/Library/Developer/Xcode/DerivedData" -path "*/AgentDrop-*/Build/Products/Debug/AgentDrop.app" -type d | sort | tail -n 1)"
+APP_DEST="$HOME/Applications/Agent Drop.app"
+
+test -n "$APP_SRC"
+pkill -x AgentDrop || true
+pkill -x AgentDropFinderSync || true
+rm -rf "$APP_DEST"
+cp -R "$APP_SRC" "$APP_DEST"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R -trusted "$APP_DEST"
+xcrun pluginkit -a "$APP_DEST/Contents/PlugIns/AgentDropFinderSync.appex" || true
+xcrun pluginkit -e use -i ai.shili.AgentDrop.FinderSync || true
+open -n "$APP_DEST"
+killall Finder
+```
+
+If the right-click menu is not visible, open System Settings > Login Items &
+Extensions > Extensions and enable the Agent Drop Finder extension. Restart
+Finder after changing the extension state.
 
 Run the CLI during development:
 
@@ -90,7 +123,36 @@ swift run agent-drop send --target devbox ./demo.png
 
 Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
 
-The Finder extension may need to be enabled in System Settings after building the app locally.
+## Finder Extension Notes
+
+- The Finder menu is `Agent Drop -> <SSH target>`.
+- The root menu item includes a small template upload icon.
+- On upload success or failure, Finder badges the selected file briefly.
+- The extension writes diagnostics to
+  `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`.
+- macOS notification delivery from Finder Sync is best-effort. A reliable
+  in-app upload history and feedback surface is tracked in
+  [issue #2](https://github.com/shiliai/agent-drop/issues/2).
+
+Manual Finder smoke test:
+
+```bash
+TEST_FILE="$HOME/Downloads/agent-drop-ui-test.png"
+printf 'AGENT_DROP_PENDING' | pbcopy
+open -R "$TEST_FILE"
+```
+
+Then right-click the file in Finder, choose `Agent Drop -> x570 config` or
+another configured target, and verify:
+
+```bash
+pbpaste
+ssh x570 'd="$HOME/.agent-inbox/$(date +%F)"; ls -l "$d"/agent-drop-ui-test*; wc -c "$d"/agent-drop-ui-test*'
+tail -n 80 "$HOME/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log"
+```
+
+Expected: `pbpaste` contains the final remote path, the remote file exists, and
+the diagnostic log records `upload success`.
 
 ## Status
 

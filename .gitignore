@@ -2,5 +2,6 @@
 .superpowers/
 .build/
 DerivedData/
+AgentDrop.xcodeproj/
 xcuserdata/
 *.xcuserstate

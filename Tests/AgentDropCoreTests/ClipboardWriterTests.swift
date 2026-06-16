@@ -16,6 +16,15 @@ final class ClipboardWriterTests: XCTestCase {
             )
         ])
     }
+
+    func testFailureIncludesPbcopyStderr() {
+        let runner = FakeClipboardCommandRunner(result: .failure(exitCode: 1, stdout: "", stderr: "pasteboard unavailable"))
+        let writer = PBClipboardWriter(runner: runner)
+
+        XCTAssertThrowsError(try writer.write("path")) { error in
+            XCTAssertEqual(error as? ClipboardError, .writeFailed("pasteboard unavailable"))
+        }
+    }
 }
 
 private final class FakeClipboardCommandRunner: CommandRunning {

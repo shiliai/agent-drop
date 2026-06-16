@@ -19,6 +19,25 @@ final class BundlePlistTests: XCTestCase {
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "$(EXECUTABLE_NAME)")
     }
 
+    func testAppEntitlementsSupportDevelopmentSigning() throws {
+        let entitlements = try loadPlist("Sources/AgentDropApp/AgentDrop.entitlements")
+
+        XCTAssertEqual(entitlements["com.apple.security.app-sandbox"] as? Bool, true)
+        XCTAssertEqual(entitlements["com.apple.security.network.client"] as? Bool, true)
+    }
+
+    func testFinderExtensionEntitlementsSupportDevelopmentSigning() throws {
+        let entitlements = try loadPlist("Sources/AgentDropFinderSync/AgentDropFinderSync.entitlements")
+
+        XCTAssertEqual(entitlements["com.apple.security.app-sandbox"] as? Bool, true)
+        XCTAssertEqual(entitlements["com.apple.security.network.client"] as? Bool, true)
+        XCTAssertEqual(entitlements["com.apple.security.files.user-selected.read-only"] as? Bool, true)
+        XCTAssertEqual(
+            entitlements["com.apple.security.temporary-exception.files.absolute-path.read-only"] as? [String],
+            ["/Users/chris/", "/Users/chris/.ssh/"]
+        )
+    }
+
     private func loadPlist(_ relativePath: String) throws -> [String: Any] {
         let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent(relativePath)
