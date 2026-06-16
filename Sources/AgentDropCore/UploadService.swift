@@ -3,15 +3,24 @@ import Foundation
 public struct UploadedFile: Equatable {
     public let localURL: URL
     public let remoteDisplayPath: String
+    public let localDisplayName: String
+
+    public init(localURL: URL, remoteDisplayPath: String, localDisplayName: String? = nil) {
+        self.localURL = localURL
+        self.remoteDisplayPath = remoteDisplayPath
+        self.localDisplayName = localDisplayName ?? localURL.lastPathComponent
+    }
 }
 
 public struct UploadSourceFile: Equatable {
     public let sourceURL: URL
     public let remoteName: String
+    public let localDisplayName: String
 
-    public init(sourceURL: URL, remoteName: String) {
+    public init(sourceURL: URL, remoteName: String, localDisplayName: String? = nil) {
         self.sourceURL = sourceURL
         self.remoteName = remoteName
+        self.localDisplayName = localDisplayName ?? remoteName
     }
 }
 
@@ -62,7 +71,11 @@ public final class UploadService {
                 throw UploadError.rsyncFailed(result.stderr)
             }
 
-            uploaded.append(UploadedFile(localURL: source.sourceURL, remoteDisplayPath: inboxPath.displayPath(forRemoteName: remoteName)))
+            uploaded.append(UploadedFile(
+                localURL: source.sourceURL,
+                remoteDisplayPath: inboxPath.displayPath(forRemoteName: remoteName),
+                localDisplayName: source.localDisplayName
+            ))
         }
 
         if copyToClipboard {

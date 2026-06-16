@@ -97,6 +97,44 @@ final class UploadHistoryStoreTests: XCTestCase {
         XCTAssertEqual(loaded.map(\.targetName), (0..<entryCount).reversed().map { "target-\($0)" })
     }
 
+    func testConcurrentAppendsAcrossTwoStoresSharingOnePathPreserveAllEntries() throws {
+        let root = try temporaryDirectory()
+        let entryCount = 200
+        let historyURL = root.appendingPathComponent("upload-history.json")
+        let firstStore = UploadHistoryStore(historyFileURL: historyURL, limit: entryCount)
+        let secondStore = UploadHistoryStore(historyFileURL: historyURL, limit: entryCount)
+        let start = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        let errors = ErrorRecorder()
+
+        for index in 0..<entryCount {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                start.wait()
+                defer { group.leave() }
+
+                do {
+                    let store = index.isMultiple(of: 2) ? firstStore : secondStore
+                    try store.append(Self.entry(index: index))
+                } catch {
+                    errors.append(error)
+                }
+            }
+        }
+
+        for _ in 0..<entryCount {
+            start.signal()
+        }
+
+        XCTAssertEqual(group.wait(timeout: .now() + 10), .success)
+        XCTAssertTrue(errors.isEmpty, "Unexpected append errors: \(errors.values)")
+
+        let loaded = try firstStore.load()
+        XCTAssertEqual(loaded.count, entryCount)
+        XCTAssertEqual(Set(loaded.map(\.id)).count, entryCount)
+        XCTAssertEqual(Set(loaded.map(\.targetName)).count, entryCount)
+    }
+
     func testCorruptJSONIsPreservedAndHistoryResets() throws {
         let root = try temporaryDirectory()
         let historyURL = root.appendingPathComponent("upload-history.json")

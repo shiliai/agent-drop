@@ -205,7 +205,7 @@ private struct UploadHistoryDetail: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Local Files")
                         .font(.headline)
-                    ForEach(entry.localFileNames, id: \.self) { name in
+                    ForEach(Array(entry.localFileNames.enumerated()), id: \.offset) { _, name in
                         Text(name)
                             .font(.system(.body, design: .monospaced))
                             .lineLimit(1)

@@ -22,4 +22,11 @@ final class UploadFeedbackFormatterTests: XCTestCase {
 
         XCTAssertEqual(message, "Upload to x570 failed. agent-drop-ui-test.png could not be copied")
     }
+
+    func testFailureReasonExtractsUploadErrorAssociatedMessage() {
+        XCTAssertEqual(
+            UploadFeedbackFormatter.shortReason(from: String(describing: UploadError.rsyncFailed("Permission denied"))),
+            "Permission denied"
+        )
+    }
 }

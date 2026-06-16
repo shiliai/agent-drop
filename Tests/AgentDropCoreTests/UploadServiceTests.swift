@@ -90,6 +90,25 @@ final class UploadServiceTests: XCTestCase {
         ))
     }
 
+    func testUploadsStagedSourcePreservingOriginalDisplayName() throws {
+        let source = UploadSourceFile(
+            sourceURL: URL(fileURLWithPath: "/tmp/AgentDropUploads/fixed/0-demo.png"),
+            remoteName: "demo.png"
+        )
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        let uploaded = try service.upload(sources: [source], target: SSHTarget(name: "devbox", source: .config), copyToClipboard: false)
+
+        XCTAssertEqual(uploaded.map(\.localDisplayName), ["demo.png"])
+        XCTAssertEqual(uploaded.map(\.localURL.lastPathComponent), ["0-demo.png"])
+    }
+
     func testDoesNotWriteClipboardWhenUploadFails() {
         let file = URL(fileURLWithPath: "/tmp/demo.png")
         let runner = FakeCommandRunner(results: [

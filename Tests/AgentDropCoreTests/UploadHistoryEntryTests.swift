@@ -78,6 +78,25 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertNil(entry.errorMessage)
     }
 
+    func testBuildsSucceededEntryUsingOriginalDisplayNamesInsteadOfStagedLocalNames() {
+        let uploaded = [
+            UploadedFile(
+                localURL: URL(fileURLWithPath: "/tmp/AgentDropUploads/fixed/0-demo.png"),
+                remoteDisplayPath: "~/.agent-inbox/2026-06-15/demo.png",
+                localDisplayName: "demo.png"
+            )
+        ]
+
+        let entry = UploadHistoryEntry.succeeded(
+            targetName: "x570",
+            uploadedFiles: uploaded,
+            createdAt: Date(timeIntervalSince1970: 123),
+            id: UUID(uuidString: "45454545-4545-4545-4545-454545454545")!
+        )
+
+        XCTAssertEqual(entry.localFileNames, ["demo.png"])
+    }
+
     func testBuildsFailedEntryFromSelectedFiles() {
         let entry = UploadHistoryEntry.failed(
             targetName: "x570",
@@ -92,6 +111,18 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertEqual(entry.localFileNames, ["demo.png"])
         XCTAssertEqual(entry.remoteDisplayPaths, [])
         XCTAssertEqual(entry.errorMessage, String(repeating: "x", count: 117) + "...")
+    }
+
+    func testBuildsFailedEntryUsingNormalizedUserFacingReason() {
+        let entry = UploadHistoryEntry.failed(
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/demo.png")],
+            errorDescription: String(describing: UploadError.rsyncFailed("Permission denied")),
+            createdAt: Date(timeIntervalSince1970: 123),
+            id: UUID(uuidString: "56565656-5656-5656-5656-565656565656")!
+        )
+
+        XCTAssertEqual(entry.errorMessage, "Permission denied")
     }
 
     func testFailureMessageTrimsLeadingAndTrailingWhitespaceForHistoryDisplay() {

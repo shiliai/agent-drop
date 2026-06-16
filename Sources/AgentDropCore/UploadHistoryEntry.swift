@@ -40,10 +40,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable {
     }
 
     public static func shortErrorMessage(from message: String) -> String {
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 120 else { return trimmed }
-        let end = trimmed.index(trimmed.startIndex, offsetBy: 117)
-        return String(trimmed[..<end]) + "..."
+        UploadFeedbackFormatter.shortReason(from: message)
     }
 }
 
@@ -76,7 +73,7 @@ public extension UploadHistoryEntry {
             createdAt: createdAt,
             targetName: targetName,
             status: .succeeded,
-            localFileNames: uploadedFiles.map { $0.localURL.lastPathComponent },
+            localFileNames: uploadedFiles.map(\.localDisplayName),
             remoteDisplayPaths: uploadedFiles.map(\.remoteDisplayPath),
             errorMessage: nil
         )

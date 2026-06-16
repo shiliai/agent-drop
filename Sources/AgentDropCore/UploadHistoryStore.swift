@@ -2,10 +2,12 @@ import Foundation
 
 public final class UploadHistoryStore: @unchecked Sendable {
     private static let finderExtensionContainerPath = "/Library/Containers/ai.shili.AgentDrop.FinderSync/Data"
+    // Same-process coordination for multiple store instances sharing one history path.
+    private static let coordinatorRegistry = QueueRegistry()
     private let historyFileURL: URL
     private let limit: Int
     private let fileManager: FileManager
-    private let queue = DispatchQueue(label: "ai.shili.AgentDrop.UploadHistoryStore")
+    private let coordinator: DispatchQueue
 
     public init(
         historyFileURL: URL = UploadHistoryStore.defaultHistoryFileURL(),
@@ -15,6 +17,7 @@ public final class UploadHistoryStore: @unchecked Sendable {
         self.historyFileURL = historyFileURL
         self.limit = limit
         self.fileManager = fileManager
+        self.coordinator = Self.coordinator(for: historyFileURL)
     }
 
     public static func defaultHistoryFileURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
@@ -31,17 +34,26 @@ public final class UploadHistoryStore: @unchecked Sendable {
     }
 
     public func load() throws -> [UploadHistoryEntry] {
-        try queue.sync {
+        try coordinator.sync {
             try loadUnlocked()
         }
     }
 
     public func append(_ entry: UploadHistoryEntry) throws {
-        try queue.sync {
+        try coordinator.sync {
             var entries = try loadUnlocked()
             entries.insert(entry, at: 0)
             try write(sortedAndTrimmed(entries))
         }
+    }
+
+    private static func coordinator(for historyFileURL: URL) -> DispatchQueue {
+        let path = canonicalQueueKey(for: historyFileURL)
+        return coordinatorRegistry.queue(forPath: path)
+    }
+
+    private static func canonicalQueueKey(for historyFileURL: URL) -> String {
+        historyFileURL.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     private func loadUnlocked() throws -> [UploadHistoryEntry] {
@@ -78,5 +90,23 @@ public final class UploadHistoryStore: @unchecked Sendable {
             .appendingPathComponent("\(historyFileURL.lastPathComponent).corrupt-\(stamp)")
         try? fileManager.removeItem(at: corruptURL)
         try fileManager.moveItem(at: historyFileURL, to: corruptURL)
+    }
+}
+
+private final class QueueRegistry: @unchecked Sendable {
+    private let lock = NSLock()
+    private var queuesByPath: [String: DispatchQueue] = [:]
+
+    func queue(forPath path: String) -> DispatchQueue {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if let existing = queuesByPath[path] {
+            return existing
+        }
+
+        let queue = DispatchQueue(label: "ai.shili.AgentDrop.UploadHistoryStore.\(path)")
+        queuesByPath[path] = queue
+        return queue
     }
 }
