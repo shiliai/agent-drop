@@ -19,11 +19,11 @@ final class BundlePlistTests: XCTestCase {
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "$(EXECUTABLE_NAME)")
     }
 
-    func testAppEntitlementsSupportDevelopmentSigning() throws {
+    func testAppEntitlementsKeepContainingAppUnsandboxedForDeveloperHistoryAccess() throws {
         let entitlements = try loadPlist("Sources/AgentDropApp/AgentDrop.entitlements")
 
-        XCTAssertEqual(entitlements["com.apple.security.app-sandbox"] as? Bool, true)
-        XCTAssertEqual(entitlements["com.apple.security.network.client"] as? Bool, true)
+        XCTAssertNil(entitlements["com.apple.security.app-sandbox"])
+        XCTAssertNil(entitlements["com.apple.security.network.client"])
     }
 
     func testFinderExtensionEntitlementsSupportDevelopmentSigning() throws {
