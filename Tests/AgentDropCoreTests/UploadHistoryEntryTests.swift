@@ -56,7 +56,14 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertNil(entry.copyPayload)
     }
 
-    func testFailureMessageIsTrimmedForHistoryDisplay() {
+    func testFailureMessageTrimsLeadingAndTrailingWhitespaceForHistoryDisplay() {
+        XCTAssertEqual(
+            UploadHistoryEntry.shortErrorMessage(from: "  rsync failed\n"),
+            "rsync failed"
+        )
+    }
+
+    func testFailureMessageIsTruncatedForHistoryDisplay() {
         let longMessage = String(repeating: "x", count: 180)
 
         XCTAssertEqual(
