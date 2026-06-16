@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 public final class UploadHistoryStore: @unchecked Sendable {
     private static let finderExtensionContainerPath = "/Library/Containers/ai.shili.AgentDrop.FinderSync/Data"
@@ -8,6 +9,7 @@ public final class UploadHistoryStore: @unchecked Sendable {
     private let limit: Int
     private let fileManager: FileManager
     private let coordinator: DispatchQueue
+    private let lockFileURL: URL
 
     public init(
         historyFileURL: URL = UploadHistoryStore.defaultHistoryFileURL(),
@@ -18,6 +20,8 @@ public final class UploadHistoryStore: @unchecked Sendable {
         self.limit = limit
         self.fileManager = fileManager
         self.coordinator = Self.coordinator(for: historyFileURL)
+        self.lockFileURL = historyFileURL.deletingLastPathComponent()
+            .appendingPathComponent(".upload-history.lock", isDirectory: false)
     }
 
     public static func defaultHistoryFileURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
@@ -35,15 +39,19 @@ public final class UploadHistoryStore: @unchecked Sendable {
 
     public func load() throws -> [UploadHistoryEntry] {
         try coordinator.sync {
-            try loadUnlocked()
+            try withProcessLock {
+                try loadUnlocked()
+            }
         }
     }
 
     public func append(_ entry: UploadHistoryEntry) throws {
         try coordinator.sync {
-            var entries = try loadUnlocked()
-            entries.insert(entry, at: 0)
-            try write(sortedAndTrimmed(entries))
+            try withProcessLock {
+                var entries = try loadUnlocked()
+                entries.insert(entry, at: 0)
+                try write(sortedAndTrimmed(entries))
+            }
         }
     }
 
@@ -90,6 +98,34 @@ public final class UploadHistoryStore: @unchecked Sendable {
             .appendingPathComponent("\(historyFileURL.lastPathComponent).corrupt-\(stamp)")
         try? fileManager.removeItem(at: corruptURL)
         try fileManager.moveItem(at: historyFileURL, to: corruptURL)
+    }
+
+    private func withProcessLock<T>(_ operation: () throws -> T) throws -> T {
+        let directory = lockFileURL.deletingLastPathComponent()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !fileManager.fileExists(atPath: lockFileURL.path) {
+            let created = fileManager.createFile(atPath: lockFileURL.path, contents: nil)
+            if !created && !fileManager.fileExists(atPath: lockFileURL.path) {
+                throw CocoaError(.fileWriteUnknown)
+            }
+        }
+
+        let fileDescriptor = open(lockFileURL.path, O_RDWR)
+        guard fileDescriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            close(fileDescriptor)
+        }
+
+        guard flock(fileDescriptor, LOCK_EX) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer {
+            flock(fileDescriptor, LOCK_UN)
+        }
+
+        return try operation()
     }
 }
 

@@ -135,6 +135,50 @@ final class UploadHistoryStoreTests: XCTestCase {
         XCTAssertEqual(Set(loaded.map(\.targetName)).count, entryCount)
     }
 
+    func testAppendWaitsForExternalProcessLockOnSameHistoryPath() throws {
+        let root = try temporaryDirectory()
+        let historyURL = root.appendingPathComponent("upload-history.json")
+        let lockURL = root.appendingPathComponent(".upload-history.lock")
+        let readyURL = root.appendingPathComponent("lock-ready")
+        let store = UploadHistoryStore(historyFileURL: historyURL)
+        let blockerScriptURL = root.appendingPathComponent("hold-lock.sh")
+        let script = """
+        #!/bin/sh
+        /usr/bin/python3 - "$1" "$2" "$3" <<'PY'
+        import fcntl
+        import pathlib
+        import sys
+        import time
+
+        with open(sys.argv[1], "a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            pathlib.Path(sys.argv[3]).write_text("ready")
+            time.sleep(float(sys.argv[2]))
+        PY
+        """
+        try script.write(to: blockerScriptURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: blockerScriptURL.path)
+
+        let blocker = Process()
+        blocker.executableURL = URL(fileURLWithPath: "/bin/sh")
+        blocker.arguments = [blockerScriptURL.path, lockURL.path, "2", readyURL.path]
+        try blocker.run()
+
+        let deadline = Date().addingTimeInterval(2)
+        while !FileManager.default.fileExists(atPath: readyURL.path) && Date() < deadline {
+            usleep(50_000)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: readyURL.path))
+
+        let start = Date()
+        try store.append(entry(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", createdAt: 100, targetName: "blocked"))
+        let elapsed = Date().timeIntervalSince(start)
+
+        blocker.waitUntilExit()
+        XCTAssertGreaterThanOrEqual(elapsed, 1.5)
+        XCTAssertEqual(try store.load().map(\.targetName), ["blocked"])
+    }
+
     func testCorruptJSONIsPreservedAndHistoryResets() throws {
         let root = try temporaryDirectory()
         let historyURL = root.appendingPathComponent("upload-history.json")
