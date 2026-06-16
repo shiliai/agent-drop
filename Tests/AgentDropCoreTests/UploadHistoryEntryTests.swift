@@ -125,6 +125,22 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertEqual(entry.errorMessage, "Permission denied")
     }
 
+    func testBuildsFailedEntryPreservingQuotedPathInsideUploadErrorPayload() {
+        let errorDescription = #"rsyncFailed("rsync: [sender] link_stat \"/tmp/demo file.txt\" failed: No such file or directory (2)")"#
+        let entry = UploadHistoryEntry.failed(
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/demo.png")],
+            errorDescription: errorDescription,
+            createdAt: Date(timeIntervalSince1970: 123),
+            id: UUID(uuidString: "57575757-5757-5757-5757-575757575757")!
+        )
+
+        XCTAssertEqual(
+            entry.errorMessage,
+            #"rsync: [sender] link_stat "/tmp/demo file.txt" failed: No such file or directory (2)"#
+        )
+    }
+
     func testFailureMessageTrimsLeadingAndTrailingWhitespaceForHistoryDisplay() {
         XCTAssertEqual(
             UploadHistoryEntry.shortErrorMessage(from: "  rsync failed\n"),

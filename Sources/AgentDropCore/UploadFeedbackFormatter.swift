@@ -50,14 +50,22 @@ public enum UploadFeedbackFormatter {
             return nil
         }
 
-        let start = errorDescription.index(errorDescription.startIndex, offsetBy: pattern.count)
-        guard errorDescription[start...].first == "\"" else {
+        guard errorDescription.hasSuffix("\")") else {
             return nil
         }
-        let contentStart = errorDescription.index(after: start)
-        guard let contentEnd = errorDescription[contentStart...].firstIndex(of: "\"") else {
+
+        let contentStart = errorDescription.index(errorDescription.startIndex, offsetBy: pattern.count)
+        let contentEnd = errorDescription.index(errorDescription.endIndex, offsetBy: -2)
+        guard contentStart <= contentEnd else {
             return nil
         }
-        return String(errorDescription[contentStart..<contentEnd])
+
+        let wrapped = String(errorDescription[contentStart..<contentEnd])
+        guard wrapped.first == "\"" else {
+            return nil
+        }
+
+        let quotedPayload = String(wrapped.dropFirst())
+        return quotedPayload.replacingOccurrences(of: #"\""#, with: #"""#)
     }
 }

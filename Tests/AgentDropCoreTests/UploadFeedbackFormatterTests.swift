@@ -29,4 +29,13 @@ final class UploadFeedbackFormatterTests: XCTestCase {
             "Permission denied"
         )
     }
+
+    func testFailureReasonPreservesQuotedPathInsideUploadErrorPayload() {
+        let errorDescription = #"rsyncFailed("rsync: [sender] link_stat \"/tmp/demo file.txt\" failed: No such file or directory (2)")"#
+
+        XCTAssertEqual(
+            UploadFeedbackFormatter.shortReason(from: errorDescription),
+            #"rsync: [sender] link_stat "/tmp/demo file.txt" failed: No such file or directory (2)"#
+        )
+    }
 }
