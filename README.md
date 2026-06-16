@@ -134,6 +134,20 @@ Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
   in-app upload history and feedback surface is tracked in
   [issue #2](https://github.com/shiliai/agent-drop/issues/2).
 
+## Upload History
+
+Agent Drop records recent Finder uploads in the Finder extension container:
+
+    ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
+
+The app reads that file to show `Recent Uploads`. Successful rows include
+remote paths that can be copied again. Failed rows include a short error.
+
+For this developer build path, the containing app is intentionally
+unsandboxed so it can read the Finder extension history file without requiring
+an Apple Developer Program App Group. A later signed and notarized release can
+migrate the store to an App Group container.
+
 Manual Finder smoke test:
 
 ```bash
@@ -153,6 +167,17 @@ tail -n 80 "$HOME/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/
 
 Expected: `pbpaste` contains the final remote path, the remote file exists, and
 the diagnostic log records `upload success`.
+
+After a Finder upload, verify history was written:
+
+    HISTORY="$HOME/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json"
+    test -f "$HISTORY"
+    python3 -m json.tool "$HISTORY" | sed -n '1,80p'
+
+Open `Agent Drop.app` and confirm the upload appears in `Recent Uploads`.
+Select the upload, click `Copy Paths`, and verify:
+
+    pbpaste
 
 ## Status
 
