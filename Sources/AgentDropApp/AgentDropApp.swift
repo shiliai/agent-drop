@@ -15,6 +15,7 @@ private struct UploadHistoryView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var entries: [UploadHistoryEntry] = []
     @State private var selectedID: UploadHistoryEntry.ID?
+    @State private var loadErrorMessage: String?
     @State private var statusMessage: String?
 
     private let store = UploadHistoryStore()
@@ -36,7 +37,13 @@ private struct UploadHistoryView: View {
                     }
                 }
 
-                if entries.isEmpty {
+                if let loadErrorMessage, entries.isEmpty {
+                    ContentUnavailableView(
+                        "History unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(loadErrorMessage)
+                    )
+                } else if entries.isEmpty {
                     ContentUnavailableView(
                         "No uploads yet",
                         systemImage: "tray",
@@ -57,6 +64,12 @@ private struct UploadHistoryView: View {
         } detail: {
             if let selectedEntry {
                 UploadHistoryDetail(entry: selectedEntry, statusMessage: $statusMessage)
+            } else if let loadErrorMessage {
+                ContentUnavailableView(
+                    "History unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(loadErrorMessage)
+                )
             } else {
                 ContentUnavailableView(
                     "Select an upload",
@@ -72,11 +85,15 @@ private struct UploadHistoryView: View {
                 loadHistory()
             }
         }
+        .onChange(of: selectedID) { _, _ in
+            statusMessage = nil
+        }
     }
 
     private func loadHistory() {
         do {
             entries = try store.load()
+            loadErrorMessage = nil
             if selectedID == nil || !entries.contains(where: { $0.id == selectedID }) {
                 selectedID = entries.first?.id
             }
@@ -84,7 +101,8 @@ private struct UploadHistoryView: View {
         } catch {
             entries = []
             selectedID = nil
-            statusMessage = "Could not read upload history."
+            loadErrorMessage = "Could not read upload history."
+            statusMessage = nil
         }
     }
 }
@@ -100,9 +118,13 @@ private struct UploadHistoryRow: View {
                     .labelStyle(.iconOnly)
                 Text(entry.targetName)
                     .fontWeight(.medium)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
                 Spacer()
                 Text(entry.createdAt, style: .time)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             Text(summary)
@@ -111,6 +133,7 @@ private struct UploadHistoryRow: View {
                 .lineLimit(1)
         }
         .padding(.vertical, 4)
+        .help(entry.targetName)
     }
 
     private var summary: String {
@@ -127,70 +150,80 @@ private struct UploadHistoryDetail: View {
     @Binding var statusMessage: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.targetName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Text(entry.createdAt, format: .dateTime.year().month().day().hour().minute().second())
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let payload = entry.copyPayload {
-                    Button("Copy Paths") {
-                        copy(payload)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(entry.targetName)
+                            .font(.title2)
+                            .fontWeight(.semibold)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Text(entry.createdAt, format: .dateTime.year().month().day().hour().minute().second())
+                            .foregroundStyle(.secondary)
                     }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if let payload = entry.copyPayload {
+                        Button("Copy Paths") {
+                            copy(payload)
+                        }
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
+                    }
                 }
-            }
 
-            LabeledContent("Status") {
-                Text(entry.status == .succeeded ? "Succeeded" : "Failed")
-                    .foregroundStyle(entry.status == .succeeded ? .green : .red)
-            }
-
-            if !entry.remoteDisplayPaths.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Remote Paths")
-                        .font(.headline)
-                    Text(entry.remoteDisplayPaths.joined(separator: "\n"))
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(nsColor: .textBackgroundColor))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                LabeledContent("Status") {
+                    Text(entry.status == .succeeded ? "Succeeded" : "Failed")
+                        .foregroundStyle(entry.status == .succeeded ? .green : .red)
                 }
-            }
 
-            if let errorMessage = entry.errorMessage {
+                if !entry.remoteDisplayPaths.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Remote Paths")
+                            .font(.headline)
+                        Text(entry.remoteDisplayPaths.joined(separator: "\n"))
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(nsColor: .textBackgroundColor))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+
+                if let errorMessage = entry.errorMessage {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Error")
+                            .font(.headline)
+                        Text(errorMessage)
+                            .textSelection(.enabled)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Error")
+                    Text("Local Files")
                         .font(.headline)
-                    Text(errorMessage)
-                        .textSelection(.enabled)
+                    ForEach(entry.localFileNames, id: \.self) { name in
+                        Text(name)
+                            .font(.system(.body, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(name)
+                    }
+                }
+
+                if let statusMessage {
+                    Text(statusMessage)
                         .foregroundStyle(.secondary)
                 }
-            }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Local Files")
-                    .font(.headline)
-                ForEach(entry.localFileNames, id: \.self) { name in
-                    Text(name)
-                        .font(.system(.body, design: .monospaced))
-                }
+                Spacer()
             }
-
-            if let statusMessage {
-                Text(statusMessage)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(24)
         }
-        .padding(24)
     }
 
     private func copy(_ payload: String) {
