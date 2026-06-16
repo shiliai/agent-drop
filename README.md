@@ -139,8 +139,8 @@ Agent Drop records recent Finder uploads in the Finder extension container:
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-The app reads that file to show `Recent Uploads`. Successful entries show
-remote paths that can be copied again. Failed rows include a short error.
+The app reads that file to show `Recent Uploads`. Selecting a successful entry
+shows remote paths that can be copied again. Failed rows include a short error.
 
 For this developer build path, the containing app is intentionally
 unsandboxed so it can read the Finder extension history file without requiring
@@ -174,8 +174,10 @@ After a Finder upload, verify history was written:
     python3 -m json.tool "$HISTORY" | sed -n '1,80p'
 
 Open `Agent Drop.app` and confirm the upload appears in `Recent Uploads`.
-Select the upload, click `Copy Paths`, and verify:
+Select the upload, reset the clipboard, click `Copy Paths`, and verify
+`pbpaste` no longer shows the placeholder but the remote path:
 
+    printf 'APP_COPY_PENDING' | pbcopy
     pbpaste
 
 ## Status
