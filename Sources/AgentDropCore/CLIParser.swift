@@ -2,6 +2,7 @@ public enum CLICommand: Equatable {
     case targets
     case doctor
     case send(target: String?, paths: [String])
+    case pull(target: String?, paths: [String])
 }
 
 public enum CLIParseError: Error, Equatable {
@@ -21,13 +22,18 @@ public enum CLIParser {
         case "doctor":
             return .doctor
         case "send":
-            return try parseSend(Array(arguments.dropFirst()))
+            return try parsePathCommand(Array(arguments.dropFirst()), makeCommand: CLICommand.send)
+        case "pull":
+            return try parsePathCommand(Array(arguments.dropFirst()), makeCommand: CLICommand.pull)
         default:
             throw CLIParseError.unknownCommand(command)
         }
     }
 
-    private static func parseSend(_ arguments: [String]) throws -> CLICommand {
+    private static func parsePathCommand(
+        _ arguments: [String],
+        makeCommand: (String?, [String]) -> CLICommand
+    ) throws -> CLICommand {
         var target: String?
         var paths: [String] = []
         var index = 0
@@ -46,6 +52,6 @@ public enum CLIParser {
         }
 
         guard paths.isEmpty == false else { throw CLIParseError.missingFiles }
-        return .send(target: target, paths: paths)
+        return makeCommand(target, paths)
     }
 }
