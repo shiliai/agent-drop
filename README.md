@@ -21,6 +21,16 @@ After a target is selected, Agent Drop uploads the files to the remote machine a
 
 You can then paste those paths into an existing SSH terminal for Codex, Claude Code, or another remote coding agent.
 
+## Screenshots
+
+Finder right-click menu:
+
+![Agent Drop Finder context menu](docs/assets/agent-drop-finder-menu.png)
+
+Recent uploads window:
+
+![Agent Drop recent uploads window](docs/assets/agent-drop-app.png)
+
 ## V1 Goals
 
 - Run on macOS.
