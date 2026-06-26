@@ -2,9 +2,9 @@
 
 [English](README.md)
 
-Agent Drop 是一个 macOS 工具，用来把本地文件和文件夹发送到远程 SSH 开发机，让 Codex、Claude Code 或其他远程 coding agent 可以从一个稳定的 inbox 读取这些素材。
+Agent Drop 是一个 macOS 工具，用来在 Mac 和远程 SSH 开发机之间移动文件，让 Codex、Claude Code 或其他远程 coding agent 可以从稳定的交接路径读取素材。
 
-它的核心工作流很短：
+第一个工作流是把本地文件和文件夹发送到远程 inbox：
 
 ```text
 在 Finder 中右键选择文件或文件夹
@@ -24,15 +24,20 @@ Agent Drop 是一个 macOS 工具，用来把本地文件和文件夹发送到�
 
 然后你可以把这些路径直接粘贴到已有的 SSH 终端里。
 
+Agent Drop 也可以把已知的远程文件或文件夹拉回 Mac。使用
+`Agent Drop -> Pull from...` 或 CLI，粘贴 `~/runs/output.png`、
+`/tmp/build-artifacts`、`devbox:~/runs/output.png` 这样的路径，下载内容会进入
+`~/Downloads/Agent Drop/`。成功后，最终本地路径会复制到 Mac 剪贴板。
+
 ## 截图
 
 Finder 右键菜单：
 
 ![Agent Drop Finder 右键菜单](docs/assets/agent-drop-finder-menu.png)
 
-上传历史窗口：
+传输历史窗口：
 
-![Agent Drop 上传历史窗口](docs/assets/agent-drop-app.png)
+![Agent Drop 传输历史窗口](docs/assets/agent-drop-app.png)
 
 ## V1 功能
 
@@ -43,28 +48,40 @@ Finder 右键菜单：
 - 使用标准 `ssh` 和 `rsync` 上传。
 - 把上传内容放到远程 inbox 根目录 `~/.agent-inbox`。
 - 按日期分组：`~/.agent-inbox/YYYY-MM-DD/`。
-- 遇到重名时自动改名，例如 `demo-2.png`。
+- 支持把远程文件和文件夹拉回 `~/Downloads/Agent Drop/`。
+- 遇到重名时自动改名，例如 `demo-2.png` 或 `build-artifacts-2`。
 - 把最终远程路径复制到 Mac 剪贴板，路径包含文件名或文件夹名。
+- pull 成功后，把最终本地路径复制到 Mac 剪贴板。
 - 在 App 里显示最近上传历史、成功/失败状态、最后刷新时间和版本号。
 
 文件夹上传会在远端保留同名目录，并把选中文件夹里的内容同步到这个远程目录里。
 
 ## 命令行用法
 
-Agent Drop 包含一个 CLI，可以检查依赖、列出 SSH 目标，以及把文件或文件夹发送到指定目标：
+Agent Drop 包含一个 CLI，可以检查依赖、列出 SSH 目标、发送文件或文件夹，以及把远程路径拉回 Mac：
 
 ```bash
 agent-drop targets
 agent-drop doctor
 agent-drop send --target <target> <paths...>
+agent-drop pull --target <target> <remote-paths...>
 ```
 
-CLI 不提供交互式目标选择器。
+示例：
+
+```bash
+agent-drop send --target devbox ./demo.png ./project-folder
+agent-drop pull --target devbox ~/runs/output.png /tmp/build-artifacts
+agent-drop pull --target devbox devbox:~/runs/output.png
+```
+
+CLI 不提供交互式目标选择器。如果只发现一个 SSH 目标，`send` 和 `pull`
+可以在省略 `--target` 时使用它。
 
 ## V1 不包含
 
 - 不生成 prompt。
-- 不做双向同步。
+- 不做持续双向同步。
 - 不和远程项目目录自动绑定。
 - 不上传剪贴板图片或剪贴板文本。
 - 不提供 Raycast、Alfred、iOS 分享或菜单栏工作流。
@@ -74,6 +91,10 @@ CLI 不提供交互式目标选择器。
 当前 V1 设计记录在：
 
 [docs/superpowers/specs/2026-06-15-agent-drop-design.md](docs/superpowers/specs/2026-06-15-agent-drop-design.md)
+
+pull 工作流设计记录在：
+
+[docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md](docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md)
 
 ## 开发
 
@@ -129,26 +150,30 @@ killall Finder
 swift run agent-drop doctor
 swift run agent-drop targets
 swift run agent-drop send --target devbox ./demo.png ./project-folder
+swift run agent-drop pull --target devbox ~/runs/output.png
 ```
 
 Agent Drop 使用 UTC `YYYY-MM-DD` 作为上传日期目录。
 
+文件夹上传会在远端保留同名目录，并把选中文件夹里的内容同步到这个远程目录里。Pull 会把文件和文件夹放到 `~/Downloads/Agent Drop/`，保留目录内容；如果本地目标已存在，会选择带后缀的新名称。
+
 ## Finder 扩展说明
 
-- Finder 菜单是 `Agent Drop -> <SSH target>`。
+- Finder 菜单里的 `Agent Drop -> <SSH target>` 用于上传。
+- `Agent Drop -> Pull from...` 会通过 `agentdrop://pull` 打开 App 的 pull tab。
 - 根菜单项带一个小的 template upload 图标。
 - 上传成功或失败后，Finder 会短暂给选中的文件加 badge。
 - 扩展诊断日志写入：
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`。
-- Finder Sync 发出的 macOS 通知是 best-effort。App 里的 `Recent Uploads` 才是可靠的反馈和历史记录界面。
+- Finder Sync 发出的 macOS 通知是 best-effort。App 里的 `Recent Transfers` 才是可靠的反馈和历史记录界面。
 
-## 上传历史
+## 传输历史
 
-Agent Drop 会把最近的 Finder 上传记录写到 Finder 扩展容器里：
+Agent Drop 会把最近的上传和下载记录写到 Finder 扩展容器里：
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-App 会读取这个文件并显示 `Recent Uploads`。选择成功记录后，可以再次复制远程路径。失败记录会显示短错误信息。窗口底部状态栏会显示刷新状态点、最后刷新时间，以及 App 版本号/build。
+App 会读取这个文件并显示 `Recent Transfers`。选择成功的上传记录后，可以再次复制远程路径；选择成功的下载记录后，可以再次复制本地路径。失败记录会显示短错误信息，且没有可复制 payload。窗口底部状态栏会显示刷新状态点、最后刷新时间，以及 App 版本号/build。JSON 文件名为了兼容旧版本仍保留为 `upload-history.json`，但现在会存储两个传输方向。
 
 当前 developer build 路径下，主 App 有意保持 unsandboxed，这样它可以读取 Finder 扩展的历史文件，而不需要 Apple Developer Program App Group。以后如果做签名和 notarized release，可以迁移到 App Group container。
 
@@ -156,6 +181,7 @@ App 会读取这个文件并显示 `Recent Uploads`。选择成功记录后，�
 
 ```bash
 TEST_FILE="$HOME/Downloads/agent-drop-ui-test.png"
+printf 'Agent Drop Finder smoke test\n' > "$TEST_FILE"
 printf 'AGENT_DROP_PENDING' | pbcopy
 open -R "$TEST_FILE"
 ```
@@ -176,11 +202,40 @@ Finder 上传后，确认历史文件已写入：
     test -f "$HISTORY"
     python3 -m json.tool "$HISTORY" | sed -n '1,80p'
 
-打开 `Agent Drop.app`，确认上传记录出现在 `Recent Uploads`。选择上传记录，重置剪贴板，点击 `Copy Paths`，再确认 `pbpaste` 不再是占位内容，而是远程路径：
+打开 `Agent Drop.app`，确认上传记录出现在 `Recent Transfers`。选择上传记录，重置剪贴板，点击 `Copy Paths`，再确认 `pbpaste` 不再是占位内容，而是远程路径：
 
     printf 'APP_COPY_PENDING' | pbcopy
     pbpaste
 
+使用 `x570` 做手动 pull smoke test：
+
+```bash
+TEST_FILE="$TMPDIR/agent-drop-e2e-$(date -u +%Y%m%dT%H%M%SZ).txt"
+printf 'Agent Drop x570 pull smoke test\n' > "$TEST_FILE"
+REMOTE_PATH="$(swift run agent-drop send --target x570 "$TEST_FILE" | tail -n 1)"
+LOCAL_PATH="$(swift run agent-drop pull --target x570 "$REMOTE_PATH" | tail -n 1)"
+test -f "$LOCAL_PATH"
+cmp "$TEST_FILE" "$LOCAL_PATH"
+test "$(pbpaste)" = "$LOCAL_PATH"
+```
+
+文件夹往返可以发送并拉回一个小目录，再比较其中的文件：
+
+```bash
+TEST_DIR="$TMPDIR/agent-drop-e2e-dir-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$TEST_DIR/nested"
+printf 'root\n' > "$TEST_DIR/root.txt"
+printf 'nested\n' > "$TEST_DIR/nested/child.txt"
+REMOTE_DIR="$(swift run agent-drop send --target x570 "$TEST_DIR" | tail -n 1)"
+LOCAL_DIR="$(swift run agent-drop pull --target x570 "$REMOTE_DIR" | tail -n 1)"
+cmp "$TEST_DIR/root.txt" "$LOCAL_DIR/root.txt"
+cmp "$TEST_DIR/nested/child.txt" "$LOCAL_DIR/nested/child.txt"
+```
+
+重复执行同一个 pull 命令，可以确认本地重名时使用 `-2` 后缀。测试 App 路由时，复制
+`x570:$REMOTE_PATH`，在 Finder 里选择 `Agent Drop -> Pull from...`，确认 pull tab
+会预选 `x570` 并填入远程路径。
+
 ## 状态
 
-Agent Drop V1 已实现。仓库包含 Swift package/core、CLI、macOS App、Finder Sync extension、核心测试、XcodeGen project 配置，以及本地测试/构建文档。
+Agent Drop V1 已实现。仓库包含 Swift package/core、CLI、macOS App、Finder Sync extension、上传和 pull 工作流、核心测试、XcodeGen project 配置，以及本地测试/构建文档。

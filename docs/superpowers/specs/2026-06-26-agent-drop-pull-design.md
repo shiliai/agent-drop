@@ -35,7 +35,7 @@ The Finder/App UI is a thin wrapper around the same core behavior.
 ## Non-Goals
 
 - No remote file browser in the first version.
-- No bidirectional sync.
+- No continuous bidirectional sync.
 - No project-directory binding.
 - No user-facing tar archive output for the automatic large-directory path.
 - No settings UI for the tar threshold in the first version.
@@ -138,7 +138,9 @@ The first version should use a fixed threshold of 200 files for the tar path. Th
 
 ### Transfer History
 
-The current history model is upload-specific. Download support should either add `DownloadHistoryEntry` or evolve the model into a neutral `TransferHistoryEntry`.
+The current history model started upload-specific. This branch evolves
+`UploadHistoryEntry` by adding `direction` and `localDisplayPaths` while keeping
+the legacy `upload-history.json` file name for compatibility.
 
 The App should be able to show both directions:
 
@@ -213,7 +215,7 @@ The implementation should avoid leaving the remote host with a temporary archive
 - No target selected: show a clear error and do not transfer.
 - No path entered: show a clear error and do not transfer.
 - Relative remote path without `~/` or `/`: reject with a clear message.
-- Host hint conflicts with the selected target: ask the user to resolve the mismatch before downloading.
+- Host hint conflicts with the selected target: report the mismatch before downloading.
 - Remote path missing: fail without updating the clipboard.
 - Remote path is neither file nor directory: fail without updating the clipboard.
 - Remote inspection fails: fail without updating the clipboard.
