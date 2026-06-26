@@ -13,16 +13,15 @@ final class FileSelectionTests: XCTestCase {
         XCTAssertTrue(result.rejected.isEmpty)
     }
 
-    func testRejectsDirectories() throws {
+    func testAcceptsDirectories() throws {
         let root = try temporaryDirectory()
         let directory = root.appendingPathComponent("assets")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
         let result = FileSelection.validate([directory])
 
-        XCTAssertTrue(result.files.isEmpty)
-        XCTAssertEqual(result.rejected.map(\.url), [directory])
-        XCTAssertEqual(result.rejected.map(\.reason), [.directoryUnsupported])
+        XCTAssertEqual(result.files, [directory])
+        XCTAssertTrue(result.rejected.isEmpty)
     }
 
     func testRejectsMissingPaths() throws {

@@ -29,6 +29,30 @@ final class UploadStagerTests: XCTestCase {
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: staged.directory.path))
     }
+
+    func testStagesDirectoryPreservingDirectoryKindAndDisplayName() throws {
+        let root = try makeTemporaryDirectory()
+        let sourceDirectory = root.appendingPathComponent("assets", isDirectory: true)
+        let nestedFile = sourceDirectory.appendingPathComponent("demo.txt")
+        let stagingRoot = root.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        try Data("nested".utf8).write(to: nestedFile)
+
+        let staged = try UploadStager.stage(
+            files: [sourceDirectory],
+            baseDirectory: stagingRoot,
+            directoryName: "fixed"
+        )
+
+        XCTAssertEqual(staged.files.map(\.remoteName), ["assets"])
+        XCTAssertEqual(staged.files.map(\.localDisplayName), ["assets"])
+        XCTAssertEqual(staged.files.map(\.isDirectory), [true])
+        XCTAssertEqual(staged.files.map(\.sourceURL.lastPathComponent), ["0-assets"])
+        XCTAssertEqual(
+            try String(contentsOf: staged.files[0].sourceURL.appendingPathComponent("demo.txt")),
+            "nested"
+        )
+    }
 }
 
 private func makeTemporaryDirectory() throws -> URL {

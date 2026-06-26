@@ -109,6 +109,59 @@ final class UploadServiceTests: XCTestCase {
         XCTAssertEqual(uploaded.map(\.localURL.lastPathComponent), ["0-demo.png"])
     }
 
+    func testUploadsStagedDirectoryUsingRemoteDirectoryReservation() throws {
+        let source = UploadSourceFile(
+            sourceURL: URL(fileURLWithPath: "/tmp/AgentDropUploads/fixed/0-assets", isDirectory: true),
+            remoteName: "assets",
+            isDirectory: true
+        )
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        let uploaded = try service.upload(sources: [source], target: SSHTarget(name: "devbox", source: .config), copyToClipboard: false)
+
+        XCTAssertEqual(uploaded.map(\.remoteDisplayPath), ["~/.agent-inbox/2026-06-15/assets"])
+        XCTAssertEqual(uploaded.map(\.localDisplayName), ["assets"])
+        XCTAssertEqual(runner.invocations[1], CommandInvocation(
+            executable: "/usr/bin/ssh",
+            arguments: ["devbox", "if mkdir $HOME/'.agent-inbox/2026-06-15/assets' 2>/dev/null; then exit 0; fi; test -e $HOME/'.agent-inbox/2026-06-15/assets' && exit 1; exit 2"]
+        ))
+        XCTAssertEqual(runner.invocations[2], CommandInvocation(
+            executable: "/usr/bin/rsync",
+            arguments: ["-a", "/tmp/AgentDropUploads/fixed/0-assets/", "devbox:$HOME/'.agent-inbox/2026-06-15/assets'/"]
+        ))
+    }
+
+    func testUploadsDirectoryURLUsingRemoteDirectoryReservation() throws {
+        let root = try makeUploadServiceTemporaryDirectory()
+        let directory = root.appendingPathComponent("assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        let uploaded = try service.upload(files: [directory], target: SSHTarget(name: "devbox", source: .config), copyToClipboard: false)
+
+        XCTAssertEqual(uploaded.map(\.remoteDisplayPath), ["~/.agent-inbox/2026-06-15/assets"])
+        XCTAssertEqual(runner.invocations[1], CommandInvocation(
+            executable: "/usr/bin/ssh",
+            arguments: ["devbox", "if mkdir $HOME/'.agent-inbox/2026-06-15/assets' 2>/dev/null; then exit 0; fi; test -e $HOME/'.agent-inbox/2026-06-15/assets' && exit 1; exit 2"]
+        ))
+        XCTAssertEqual(runner.invocations[2], CommandInvocation(
+            executable: "/usr/bin/rsync",
+            arguments: ["-a", directory.path + "/", "devbox:$HOME/'.agent-inbox/2026-06-15/assets'/"]
+        ))
+    }
+
     func testDoesNotWriteClipboardWhenUploadFails() {
         let file = URL(fileURLWithPath: "/tmp/demo.png")
         let runner = FakeCommandRunner(results: [
@@ -157,6 +210,32 @@ final class UploadServiceTests: XCTestCase {
         XCTAssertEqual(runner.invocations.last, CommandInvocation(
             executable: "/usr/bin/ssh",
             arguments: ["devbox", "rm -f -- $HOME/'.agent-inbox/2026-06-15/demo.png'"]
+        ))
+        XCTAssertNil(clipboard.text)
+    }
+
+    func testRemovesReservedRemoteDirectoryWhenDirectoryRsyncFails() {
+        let source = UploadSourceFile(
+            sourceURL: URL(fileURLWithPath: "/tmp/AgentDropUploads/fixed/0-assets", isDirectory: true),
+            remoteName: "assets",
+            isDirectory: true
+        )
+        let runner = FakeCommandRunner(results: [
+            .success(stdout: "", stderr: ""),
+            .success(stdout: "", stderr: ""),
+            .failure(exitCode: 23, stdout: "", stderr: "rsync failed"),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeClipboard()
+        let service = UploadService(runner: runner, clipboard: clipboard, clock: FixedClock(date: Date(timeIntervalSince1970: 1_781_510_400)))
+
+        XCTAssertThrowsError(try service.upload(sources: [source], target: SSHTarget(name: "devbox", source: .config))) { error in
+            XCTAssertEqual(error as? UploadError, .rsyncFailed("rsync failed"))
+        }
+
+        XCTAssertEqual(runner.invocations.last, CommandInvocation(
+            executable: "/usr/bin/ssh",
+            arguments: ["devbox", "rm -rf -- $HOME/'.agent-inbox/2026-06-15/assets'"]
         ))
         XCTAssertNil(clipboard.text)
     }
@@ -225,4 +304,11 @@ private final class FakeCommandRunner: CommandRunning {
         invocations.append(invocation)
         return results.removeFirst()
     }
+}
+
+private func makeUploadServiceTemporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
 }

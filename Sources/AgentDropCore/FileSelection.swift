@@ -2,7 +2,6 @@ import Foundation
 
 public enum RejectionReason: Equatable {
     case missing
-    case directoryUnsupported
     case notRegularFile
 }
 
@@ -29,7 +28,7 @@ public enum FileSelection {
             }
 
             if isDirectory.boolValue {
-                rejected.append(RejectedFile(url: url, reason: .directoryUnsupported))
+                files.append(url)
                 continue
             }
 
@@ -66,8 +65,6 @@ private extension RejectionReason {
         switch self {
         case .missing:
             return "missing"
-        case .directoryUnsupported:
-            return "directory unsupported"
         case .notRegularFile:
             return "not a regular file"
         }

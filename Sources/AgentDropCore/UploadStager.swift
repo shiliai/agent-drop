@@ -29,13 +29,19 @@ public enum UploadStager {
                     }
                 }
 
+                let isDirectory = (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
                 let stagedName = "\(index)-\(file.lastPathComponent)"
-                let destination = directory.appendingPathComponent(stagedName, isDirectory: false)
+                let destination = directory.appendingPathComponent(stagedName, isDirectory: isDirectory)
                 if fileManager.fileExists(atPath: destination.path) {
                     try fileManager.removeItem(at: destination)
                 }
                 try fileManager.copyItem(at: file, to: destination)
-                stagedFiles.append(UploadSourceFile(sourceURL: destination, remoteName: file.lastPathComponent))
+                stagedFiles.append(UploadSourceFile(
+                    sourceURL: destination,
+                    remoteName: file.lastPathComponent,
+                    localDisplayName: file.lastPathComponent,
+                    isDirectory: isDirectory
+                ))
             }
         } catch {
             try? fileManager.removeItem(at: directory)

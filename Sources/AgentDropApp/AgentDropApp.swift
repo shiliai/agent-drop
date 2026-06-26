@@ -17,6 +17,9 @@ private struct UploadHistoryView: View {
     @State private var selectedID: UploadHistoryEntry.ID?
     @State private var loadErrorMessage: String?
     @State private var statusMessage: String?
+    @State private var historyWatcher: UploadHistoryFileWatcher?
+    @State private var isAutoRefreshEnabled = false
+    @State private var lastUpdatedAt: Date?
 
     private let store = UploadHistoryStore()
 
@@ -58,6 +61,12 @@ private struct UploadHistoryView: View {
                     }
                     .listStyle(.sidebar)
                 }
+
+                UploadHistoryStatusBar(
+                    isAutoRefreshEnabled: isAutoRefreshEnabled,
+                    lastUpdatedAt: lastUpdatedAt,
+                    versionDisplay: AgentDropVersion.display
+                )
             }
             .padding()
             .frame(minWidth: 300)
@@ -79,10 +88,19 @@ private struct UploadHistoryView: View {
             }
         }
         .frame(minWidth: 760, minHeight: 420)
-        .onAppear(perform: loadHistory)
+        .onAppear {
+            loadHistory()
+            startHistoryWatcher()
+        }
+        .onDisappear {
+            stopHistoryWatcher()
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 loadHistory()
+                startHistoryWatcher()
+            } else if phase == .background {
+                stopHistoryWatcher()
             }
         }
         .onChange(of: selectedID) { _, _ in
@@ -93,6 +111,7 @@ private struct UploadHistoryView: View {
     private func loadHistory() {
         do {
             entries = try store.load()
+            lastUpdatedAt = Date()
             loadErrorMessage = nil
             if selectedID == nil || !entries.contains(where: { $0.id == selectedID }) {
                 selectedID = entries.first?.id
@@ -104,6 +123,61 @@ private struct UploadHistoryView: View {
             loadErrorMessage = "Could not read upload history."
             statusMessage = nil
         }
+    }
+
+    private func startHistoryWatcher() {
+        guard historyWatcher == nil else { return }
+        let watcher = UploadHistoryFileWatcher {
+            DispatchQueue.main.async {
+                loadHistory()
+            }
+        }
+        historyWatcher = watcher
+        isAutoRefreshEnabled = watcher.start()
+    }
+
+    private func stopHistoryWatcher() {
+        historyWatcher?.stop()
+        historyWatcher = nil
+        isAutoRefreshEnabled = false
+    }
+}
+
+private struct UploadHistoryStatusBar: View {
+    let isAutoRefreshEnabled: Bool
+    let lastUpdatedAt: Date?
+    let versionDisplay: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(isAutoRefreshEnabled ? Color.green : Color.orange)
+                .frame(width: 7, height: 7)
+                .help(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
+                .accessibilityLabel(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
+
+            Text(lastUpdatedText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            Text(versionDisplay)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.top, 2)
+    }
+
+    private var lastUpdatedText: String {
+        guard let lastUpdatedAt else {
+            return "Last updated: never"
+        }
+
+        return "Last updated: \(lastUpdatedAt.formatted(date: .omitted, time: .standard))"
     }
 }
 

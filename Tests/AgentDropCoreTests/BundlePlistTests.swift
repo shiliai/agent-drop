@@ -1,4 +1,5 @@
 import XCTest
+@testable import AgentDropCore
 
 final class BundlePlistTests: XCTestCase {
     func testAppPlistDeclaresExecutable() throws {
@@ -17,6 +18,23 @@ final class BundlePlistTests: XCTestCase {
         let plist = try loadPlist("Sources/AgentDropFinderSync/Info.plist")
 
         XCTAssertEqual(plist["CFBundleExecutable"] as? String, "$(EXECUTABLE_NAME)")
+    }
+
+    func testAppAndFinderExtensionDeclareMatchingVersionAndBuild() throws {
+        let appPlist = try loadPlist("Sources/AgentDropApp/Info.plist")
+        let finderExtensionPlist = try loadPlist("Sources/AgentDropFinderSync/Info.plist")
+
+        let appVersion = try XCTUnwrap(appPlist["CFBundleShortVersionString"] as? String)
+        let finderExtensionVersion = try XCTUnwrap(
+            finderExtensionPlist["CFBundleShortVersionString"] as? String
+        )
+        let appBuild = try XCTUnwrap(appPlist["CFBundleVersion"] as? String)
+        let finderExtensionBuild = try XCTUnwrap(finderExtensionPlist["CFBundleVersion"] as? String)
+
+        XCTAssertEqual(appVersion, AgentDropVersion.current)
+        XCTAssertEqual(finderExtensionVersion, appVersion)
+        XCTAssertEqual(appBuild, AgentDropVersion.build)
+        XCTAssertEqual(finderExtensionBuild, appBuild)
     }
 
     func testAppEntitlementsKeepContainingAppUnsandboxedForDeveloperHistoryAccess() throws {

@@ -164,11 +164,16 @@ final class UploadHistoryStoreTests: XCTestCase {
         blocker.arguments = [blockerScriptURL.path, lockURL.path, "2", readyURL.path]
         try blocker.run()
 
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(5)
         while !FileManager.default.fileExists(atPath: readyURL.path) && Date() < deadline {
             usleep(50_000)
         }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: readyURL.path))
+        guard FileManager.default.fileExists(atPath: readyURL.path) else {
+            blocker.terminate()
+            blocker.waitUntilExit()
+            XCTFail("Timed out waiting for external lock holder to start")
+            return
+        }
 
         let start = Date()
         try store.append(entry(id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", createdAt: 100, targetName: "blocked"))

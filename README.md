@@ -50,7 +50,6 @@ The CLI does not implement an interactive target picker.
 - No prompt generation.
 - No bidirectional sync.
 - No remote project directory integration.
-- No directory upload.
 - No clipboard image or clipboard text upload.
 - No Raycast, Alfred, iOS sharing, or menu bar workflow.
 
@@ -123,6 +122,9 @@ swift run agent-drop send --target devbox ./demo.png
 
 Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
 
+Regular files and directories are supported. Directory uploads preserve the
+selected directory contents under a remote directory with the same display name.
+
 ## Finder Extension Notes
 
 - The Finder menu is `Agent Drop -> <SSH target>`.
@@ -141,6 +143,8 @@ Agent Drop records recent Finder uploads in the Finder extension container:
 
 The app reads that file to show `Recent Uploads`. Selecting a successful entry
 shows remote paths that can be copied again. Failed rows include a short error.
+The bottom status bar shows whether automatic refresh is active, the last
+history refresh time, and the app version/build.
 
 For this developer build path, the containing app is intentionally
 unsandboxed so it can read the Finder extension history file without requiring

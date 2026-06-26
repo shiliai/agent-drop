@@ -16,11 +16,13 @@ public struct UploadSourceFile: Equatable {
     public let sourceURL: URL
     public let remoteName: String
     public let localDisplayName: String
+    public let isDirectory: Bool
 
-    public init(sourceURL: URL, remoteName: String, localDisplayName: String? = nil) {
+    public init(sourceURL: URL, remoteName: String, localDisplayName: String? = nil, isDirectory: Bool = false) {
         self.sourceURL = sourceURL
         self.remoteName = remoteName
         self.localDisplayName = localDisplayName ?? remoteName
+        self.isDirectory = isDirectory
     }
 }
 
@@ -45,7 +47,13 @@ public final class UploadService {
 
     public func upload(files: [URL], target: SSHTarget, copyToClipboard: Bool = true) throws -> [UploadedFile] {
         try upload(
-            sources: files.map { UploadSourceFile(sourceURL: $0, remoteName: $0.lastPathComponent) },
+            sources: files.map {
+                UploadSourceFile(
+                    sourceURL: $0,
+                    remoteName: $0.lastPathComponent,
+                    isDirectory: Self.isDirectory($0)
+                )
+            },
             target: target,
             copyToClipboard: copyToClipboard
         )
@@ -57,17 +65,18 @@ public final class UploadService {
         var uploaded: [UploadedFile] = []
 
         for source in sources {
-            let remoteName = try reserveRemoteName(for: source.remoteName, target: target)
+            let remoteName = try reserveRemoteName(for: source, target: target)
             let relativePath = inboxPath.relativeDirectory + "/" + remoteName
-            let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
+            let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath) + (source.isDirectory ? "/" : "")
+            let sourcePath = source.sourceURL.path + (source.isDirectory ? "/" : "")
 
             let result = try runner.run(CommandInvocation(
                 executable: "/usr/bin/rsync",
-                arguments: ["-a", source.sourceURL.path, "\(target.connectName):\(commandPath)"]
+                arguments: ["-a", sourcePath, "\(target.connectName):\(commandPath)"]
             ))
 
             guard result.succeeded else {
-                removeReservedRemoteName(relativePath: relativePath, target: target)
+                removeReservedRemoteName(relativePath: relativePath, target: target, isDirectory: source.isDirectory)
                 throw UploadError.rsyncFailed(result.stderr)
             }
 
@@ -101,13 +110,18 @@ public final class UploadService {
         }
     }
 
-    private func reserveRemoteName(for originalName: String, target: SSHTarget) throws -> String {
-        for candidate in RemoteNamePlanner(originalName: originalName).candidates(prefixCount: 100) {
+    private func reserveRemoteName(for source: UploadSourceFile, target: SSHTarget) throws -> String {
+        for candidate in RemoteNamePlanner(originalName: source.remoteName).candidates(prefixCount: 100) {
             let relativePath = inboxPath.relativeDirectory + "/" + candidate
             let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
+            let reservationCommand = if source.isDirectory {
+                "if mkdir \(commandPath) 2>/dev/null; then exit 0; fi; test -e \(commandPath) && exit 1; exit 2"
+            } else {
+                "if ( set -C; : > \(commandPath) ) 2>/dev/null; then exit 0; fi; test -e \(commandPath) && exit 1; exit 2"
+            }
             let result = try runner.run(CommandInvocation(
                 executable: "/usr/bin/ssh",
-                arguments: [target.connectName, "if ( set -C; : > \(commandPath) ) 2>/dev/null; then exit 0; fi; test -e \(commandPath) && exit 1; exit 2"]
+                arguments: [target.connectName, reservationCommand]
             ))
 
             if result.exitCode == 0 {
@@ -121,14 +135,15 @@ public final class UploadService {
             throw UploadError.remoteExistenceCheckFailed(result.stderr)
         }
 
-        throw UploadError.noAvailableRemoteName(originalName)
+        throw UploadError.noAvailableRemoteName(source.remoteName)
     }
 
-    private func removeReservedRemoteName(relativePath: String, target: SSHTarget) {
+    private func removeReservedRemoteName(relativePath: String, target: SSHTarget, isDirectory: Bool) {
         let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
+        let removeFlag = isDirectory ? "-rf" : "-f"
         _ = try? runner.run(CommandInvocation(
             executable: "/usr/bin/ssh",
-            arguments: [target.connectName, "rm -f -- \(commandPath)"]
+            arguments: [target.connectName, "rm \(removeFlag) -- \(commandPath)"]
         ))
     }
 
@@ -137,5 +152,9 @@ public final class UploadService {
             return reason
         }
         return String(describing: error)
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 }
