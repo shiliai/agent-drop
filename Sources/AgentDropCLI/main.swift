@@ -62,7 +62,8 @@ do {
 }
 
 private func parseRemotePathArguments(_ arguments: [String]) throws -> [RemotePath] {
-    try arguments.flatMap { try RemotePathParser.parse($0) }
+    let normalizer = CLIRemotePathArgumentNormalizer()
+    return try arguments.flatMap { try RemotePathParser.parse(normalizer.normalize($0)) }
 }
 
 private func discoverTargets(runner: CommandRunning) -> [SSHTarget] {
