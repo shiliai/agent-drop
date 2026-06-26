@@ -49,8 +49,9 @@ private struct PullFormView: View {
     @State private var status = PullStatus.idle
     @State private var isDownloading = false
     @State private var didInitialLoad = false
+    @State private var activePullOperationID: UUID?
 
-    private let store = UploadHistoryStore()
+    private let historyStore = AsyncUploadHistoryStore()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -193,6 +194,8 @@ private struct PullFormView: View {
 
     private func startDownload() {
         guard !isDownloading else { return }
+        let operationID = UUID()
+        activePullOperationID = operationID
         status = .idle
 
         guard let target = selectedTarget else {
@@ -211,8 +214,13 @@ private struct PullFormView: View {
             remotePaths = try RemotePathParser.parse(remotePathText)
         } catch {
             let message = CLIErrorFormatter.message(for: error)
-            recordFailedDownload(target: target, remotePaths: rawRemotePaths, message: message)
             status = .failure(message)
+            recordFailedDownload(
+                target: target,
+                remotePaths: rawRemotePaths,
+                message: message,
+                operationID: operationID
+            )
             return
         }
 
@@ -223,17 +231,23 @@ private struct PullFormView: View {
             let result = await runDownload(remotePaths: remotePaths, target: target)
 
             await MainActor.run {
-                isDownloading = false
-
                 switch result {
                 case let .success(downloaded):
-                    if recordSucceededDownload(target: target, downloaded: downloaded) {
+                    status = .progress("Recording transfer...")
+                    recordSucceededDownload(target: target, downloaded: downloaded, operationID: operationID) {
+                        isDownloading = false
                         status = .success(downloaded.map(\.localDisplayPath))
                     }
                 case let .failure(error):
                     let message = CLIErrorFormatter.message(for: error)
-                    recordFailedDownload(target: target, remotePaths: remotePaths.map(\.path), message: message)
+                    isDownloading = false
                     status = .failure(message)
+                    recordFailedDownload(
+                        target: target,
+                        remotePaths: remotePaths.map(\.path),
+                        message: message,
+                        operationID: operationID
+                    )
                 }
             }
         }
@@ -250,28 +264,64 @@ private struct PullFormView: View {
         }.value
     }
 
-    private func recordSucceededDownload(target: SSHTarget, downloaded: [DownloadedFile]) -> Bool {
+    private func recordSucceededDownload(
+        target: SSHTarget,
+        downloaded: [DownloadedFile],
+        operationID: UUID,
+        onRecorded: @escaping () -> Void
+    ) {
         let entry = UploadHistoryEntry.downloadSucceeded(targetName: target.name, downloadedFiles: downloaded)
-        return recordHistory(entry)
+        recordHistory(entry, operationID: operationID, onRecorded: onRecorded)
     }
 
-    private func recordFailedDownload(target: SSHTarget, remotePaths: [String], message: String) {
+    private func recordFailedDownload(
+        target: SSHTarget,
+        remotePaths: [String],
+        message: String,
+        operationID: UUID,
+        onRecorded: (() -> Void)? = nil
+    ) {
         let entry = UploadHistoryEntry.downloadFailed(
             targetName: target.name,
             remotePaths: remotePaths,
             errorDescription: message
         )
-        _ = recordHistory(entry)
+        recordHistory(
+            entry,
+            operationID: operationID,
+            onRecorded: onRecorded,
+            onRecordFailed: { historyErrorMessage in
+                status = .failure("\(message)\nCould not record transfer history: \(historyErrorMessage)")
+            }
+        )
     }
 
-    private func recordHistory(_ entry: UploadHistoryEntry) -> Bool {
-        do {
-            try store.append(entry)
-            onHistoryRecorded()
-            return true
-        } catch {
-            status = .failure("Could not record transfer history: \(CLIErrorFormatter.message(for: error))")
-            return false
+    private func recordHistory(
+        _ entry: UploadHistoryEntry,
+        operationID: UUID,
+        onRecorded: (() -> Void)?,
+        onRecordFailed: ((String) -> Void)? = nil
+    ) {
+        Task {
+            do {
+                try await historyStore.append(entry)
+                await MainActor.run {
+                    guard activePullOperationID == operationID else { return }
+                    onHistoryRecorded()
+                    onRecorded?()
+                }
+            } catch {
+                let message = CLIErrorFormatter.message(for: error)
+                await MainActor.run {
+                    guard activePullOperationID == operationID else { return }
+                    isDownloading = false
+                    if let onRecordFailed {
+                        onRecordFailed(message)
+                    } else {
+                        status = .failure("Could not record transfer history: \(message)")
+                    }
+                }
+            }
         }
     }
 
@@ -319,8 +369,9 @@ private struct UploadHistoryView: View {
     @State private var historyWatcher: UploadHistoryFileWatcher?
     @State private var isAutoRefreshEnabled = false
     @State private var lastUpdatedAt: Date?
+    @State private var activeHistoryLoadID: UUID?
 
-    private let store = UploadHistoryStore()
+    private let store = AsyncUploadHistoryStore()
 
     var selectedEntry: UploadHistoryEntry? {
         entries.first { $0.id == selectedID } ?? entries.first
@@ -412,26 +463,43 @@ private struct UploadHistoryView: View {
     }
 
     private func loadHistory() {
-        do {
-            entries = try store.load()
-            lastUpdatedAt = Date()
-            loadErrorMessage = nil
-            if selectedID == nil || !entries.contains(where: { $0.id == selectedID }) {
-                selectedID = entries.first?.id
+        let loadID = UUID()
+        activeHistoryLoadID = loadID
+
+        Task {
+            let result: Result<[UploadHistoryEntry], Error>
+            do {
+                result = .success(try await store.load())
+            } catch {
+                result = .failure(error)
             }
-            statusMessage = nil
-        } catch {
-            entries = []
-            selectedID = nil
-            loadErrorMessage = "Could not read transfer history."
-            statusMessage = nil
+
+            await MainActor.run {
+                guard activeHistoryLoadID == loadID else { return }
+
+                switch result {
+                case let .success(loadedEntries):
+                    entries = loadedEntries
+                    lastUpdatedAt = Date()
+                    loadErrorMessage = nil
+                    if selectedID == nil || !loadedEntries.contains(where: { $0.id == selectedID }) {
+                        selectedID = loadedEntries.first?.id
+                    }
+                    statusMessage = nil
+                case .failure:
+                    entries = []
+                    selectedID = nil
+                    loadErrorMessage = "Could not read transfer history."
+                    statusMessage = nil
+                }
+            }
         }
     }
 
     private func startHistoryWatcher() {
         guard historyWatcher == nil else { return }
         let watcher = UploadHistoryFileWatcher {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 loadHistory()
             }
         }

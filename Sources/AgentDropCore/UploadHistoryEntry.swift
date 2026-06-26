@@ -1,12 +1,12 @@
 import Foundation
 
-public enum TransferDirection: String, Codable, Equatable {
+public enum TransferDirection: String, Codable, Equatable, Sendable {
     case upload
     case download
 }
 
-public struct UploadHistoryEntry: Codable, Equatable, Identifiable {
-    public enum Status: String, Codable, Equatable {
+public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
+    public enum Status: String, Codable, Equatable, Sendable {
         case succeeded
         case failed
     }
