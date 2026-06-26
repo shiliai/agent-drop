@@ -1,0 +1,48 @@
+name: AgentDrop
+options:
+  bundleIdPrefix: ai.shili
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+packages:
+  AgentDropPackage:
+    path: .
+targets:
+  AgentDrop:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/AgentDropApp
+      - Sources/AgentDropApp/Assets.xcassets
+    dependencies:
+      - target: AgentDropFinderSync
+        embed: true
+      - package: AgentDropPackage
+        product: AgentDropCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.shili.AgentDrop
+        INFOPLIST_FILE: Sources/AgentDropApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/AgentDropApp/AgentDrop.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: XHU4389N7L
+  AgentDropFinderSync:
+    type: app-extension
+    platform: macOS
+    productName: AgentDropFinderSync
+    sources:
+      - Sources/AgentDropFinderSync
+      - Sources/AgentDropApp/Assets.xcassets
+    dependencies:
+      - package: AgentDropPackage
+        product: AgentDropCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ai.shili.AgentDrop.FinderSync
+        INFOPLIST_FILE: Sources/AgentDropFinderSync/Info.plist
+        CODE_SIGN_ENTITLEMENTS: Sources/AgentDropFinderSync/AgentDropFinderSync.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: XHU4389N7L
+        SKIP_INSTALL: YES
