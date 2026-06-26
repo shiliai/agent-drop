@@ -307,6 +307,33 @@ final class DownloadServiceTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
     }
 
+    func testInvalidDirectoryInspectionCountsFailAndDoNotWriteClipboardOrLeaveOutputs() throws {
+        for (stdout, label) in [
+            ("directory\nabc\n", "abc"),
+            ("directory\n-1\n", "-1")
+        ] {
+            let root = try makeDownloadTemporaryDirectory()
+            let clipboard = FakeDownloadClipboard()
+            let service = DownloadService(
+                runner: FakeDownloadCommandRunner(results: [
+                    .success(stdout: stdout, stderr: "")
+                ]),
+                pipelineRunner: FakeDownloadPipelineRunner(results: []),
+                clipboard: clipboard
+            )
+
+            XCTAssertThrowsError(try service.download(
+                remotePaths: [RemotePath(hostHint: nil, path: "~/runs/artifacts")],
+                target: target,
+                destinationRoot: root
+            )) { error in
+                XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("target devbox remote path ~/runs/artifacts inspection produced unrecognized output: directory\n\(label)"))
+            }
+            XCTAssertNil(clipboard.text)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+        }
+    }
+
     func testRsyncFailureRemovesReservedOutputAndDoesNotWriteClipboard() throws {
         let root = try makeDownloadTemporaryDirectory()
         let clipboard = FakeDownloadClipboard()
