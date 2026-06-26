@@ -2,9 +2,13 @@
 
 [English](README.md)
 
-Agent Drop 是一个 macOS 工具，用来把本地文件和文件夹发送到远程 SSH 开发机，让 Codex、Claude Code 或其他远程 coding agent 可以从一个稳定的 inbox 读取这些素材。
+Agent Drop 面向一个常见的远程 agent 开发场景：你在 Mac 上工作，通过 SSH 进入远程开发机，并在远程机器上运行 Codex、Claude Code 或其他 coding agent。
 
-它的核心工作流很短：
+当远程 agent 需要读取 Mac 本地的截图、PDF、需求文档、测试 fixture 或整个文件夹时，Agent Drop 会把这些素材发送到 SSH 机器，并给出可以直接粘贴到现有终端会话里的稳定远程路径。
+
+![Agent Drop 工作流](docs/assets/agent-drop-workflow.png)
+
+它围绕这个场景提供一个很短的核心工作流：
 
 ```text
 在 Finder 中右键选择文件或文件夹
@@ -22,7 +26,7 @@ Agent Drop 是一个 macOS 工具，用来把本地文件和文件夹发送到�
 ~/.agent-inbox/2026-06-15/project-folder
 ```
 
-然后你可以把这些路径直接粘贴到已有的 SSH 终端里。
+然后你可以把这些路径直接粘贴到正在运行 Codex、Claude Code 或其他 coding agent 的 SSH 终端里。
 
 ## 截图
 
