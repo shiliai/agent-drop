@@ -49,6 +49,13 @@ final class FinderSync: FIFinderSync {
             }
         }
 
+        if !submenu.items.isEmpty {
+            submenu.addItem(.separator())
+        }
+        let pullItem = NSMenuItem(title: "Pull from...", action: #selector(openPullWindow(_:)), keyEquivalent: "")
+        pullItem.target = self
+        submenu.addItem(pullItem)
+
         root.submenu = submenu
         menu.addItem(root)
         return menu
@@ -99,6 +106,18 @@ final class FinderSync: FIFinderSync {
                 Self.markFiles(selection.files, badgeIdentifier: failureBadgeIdentifier)
                 Self.notify(title: "Agent Drop failed", body: UploadFeedbackFormatter.failure(targetName: target.name, errorDescription: String(describing: error)))
             }
+        }
+    }
+
+    @objc private func openPullWindow(_ sender: NSMenuItem) {
+        let url = AgentDropRoute.pullURL
+        Self.recordDiagnostic("pull route requested url=\(url.absoluteString)")
+        if NSWorkspace.shared.open(url) {
+            Self.recordDiagnostic("pull route opened")
+        } else {
+            let message = "Could not open Agent Drop."
+            Self.recordDiagnostic("pull route failed")
+            Self.notify(title: "Agent Drop failed", body: message)
         }
     }
 

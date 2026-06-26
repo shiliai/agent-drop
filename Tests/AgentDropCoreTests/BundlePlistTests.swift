@@ -14,6 +14,16 @@ final class BundlePlistTests: XCTestCase {
         XCTAssertEqual(plist["CFBundleIconName"] as? String, "AppIcon")
     }
 
+    func testAppPlistRegistersAgentDropURLScheme() throws {
+        let plist = try loadPlist("Sources/AgentDropApp/Info.plist")
+        let urlTypes = try XCTUnwrap(plist["CFBundleURLTypes"] as? [[String: Any]])
+        let agentDropURLType = try XCTUnwrap(urlTypes.first { urlType in
+            (urlType["CFBundleURLName"] as? String) == "ai.shili.AgentDrop.route"
+        })
+
+        XCTAssertEqual(agentDropURLType["CFBundleURLSchemes"] as? [String], ["agentdrop"])
+    }
+
     func testFinderExtensionPlistDeclaresExecutable() throws {
         let plist = try loadPlist("Sources/AgentDropFinderSync/Info.plist")
 

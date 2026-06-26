@@ -4,14 +4,21 @@ import AgentDropCore
 
 @main
 struct AgentDropApp: App {
+    @State private var selectedRoute: AgentDropRoute?
+
     var body: some Scene {
         WindowGroup {
-            TransferWindowView()
+            TransferWindowView(selectedRoute: $selectedRoute)
+                .onOpenURL { url in
+                    selectedRoute = AgentDropRoute(url: url)
+                }
         }
     }
 }
 
 private struct TransferWindowView: View {
+    @Binding var selectedRoute: AgentDropRoute?
+
     @State private var selectedTab = TransferTab.history
     @State private var historyRefreshToken = UUID()
 
@@ -32,6 +39,21 @@ private struct TransferWindowView: View {
             .tag(TransferTab.pull)
         }
         .frame(minWidth: 820, minHeight: 500)
+        .onChange(of: selectedRoute) { _, route in
+            apply(route)
+        }
+        .onAppear {
+            apply(selectedRoute)
+        }
+    }
+
+    private func apply(_ route: AgentDropRoute?) {
+        switch route {
+        case .pull:
+            selectedTab = .pull
+        case nil:
+            break
+        }
     }
 }
 
