@@ -51,6 +51,7 @@ private struct TransferWindowView: View {
         switch route {
         case .pull:
             selectedTab = .pull
+            selectedRoute = nil
         case nil:
             break
         }
