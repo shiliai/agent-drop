@@ -1,22 +1,22 @@
 import Foundation
 
-public enum RemotePathKind: Equatable {
+public enum RemotePathKind: Equatable, Sendable {
     case file
     case directory(fileCount: Int)
 }
 
-public enum DownloadTransferStrategy: Equatable {
+public enum DownloadTransferStrategy: Equatable, Sendable {
     case rsyncFile
     case rsyncDirectory
     case tarStream
 }
 
-public enum DownloadTransferExecution: Equatable {
+public enum DownloadTransferExecution: Equatable, Sendable {
     case command(CommandInvocation)
     case pipeline(remoteArchiveInvocation: CommandInvocation, localExtractInvocation: CommandInvocation)
 }
 
-public struct DownloadTransferPlan: Equatable {
+public struct DownloadTransferPlan: Equatable, Sendable {
     public let strategy: DownloadTransferStrategy
     public let execution: DownloadTransferExecution
 

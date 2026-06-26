@@ -1,6 +1,6 @@
 import Foundation
 
-public struct RemotePath: Equatable {
+public struct RemotePath: Equatable, Sendable {
     public let hostHint: String?
     public let path: String
 
@@ -10,7 +10,7 @@ public struct RemotePath: Equatable {
     }
 }
 
-public enum RemotePathParserError: Error, Equatable {
+public enum RemotePathParserError: Error, Equatable, Sendable {
     case noPaths
     case unsupportedRelativePath(String)
 }

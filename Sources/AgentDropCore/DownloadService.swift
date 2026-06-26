@@ -1,6 +1,6 @@
 import Foundation
 
-public struct DownloadedFile: Equatable {
+public struct DownloadedFile: Equatable, Sendable {
     public let remotePath: String
     public let localURL: URL
     public let localDisplayPath: String
@@ -14,7 +14,7 @@ public struct DownloadedFile: Equatable {
     }
 }
 
-public enum DownloadError: Error, Equatable {
+public enum DownloadError: Error, Equatable, Sendable {
     case noRemotePaths
     case hostHintMismatch(hostHint: String, selectedTarget: String)
     case remoteInspectionFailed(String)

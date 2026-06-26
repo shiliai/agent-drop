@@ -1,11 +1,11 @@
 import Foundation
 
-public enum SSHTargetSource: String, Equatable, Codable {
+public enum SSHTargetSource: String, Equatable, Codable, Sendable {
     case active
     case config
 }
 
-public struct SSHTarget: Equatable, Codable, Identifiable {
+public struct SSHTarget: Equatable, Codable, Identifiable, Sendable {
     public let id: String
     public let name: String
     public let connectName: String

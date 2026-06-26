@@ -1,12 +1,12 @@
 import Darwin
 import Foundation
 
-public enum LocalDestinationKind: Equatable {
+public enum LocalDestinationKind: Equatable, Sendable {
     case file
     case directory
 }
 
-public struct ReservedLocalDestination: Equatable {
+public struct ReservedLocalDestination: Equatable, Sendable {
     public let url: URL
     public let kind: LocalDestinationKind
 
@@ -21,7 +21,7 @@ public struct ReservedLocalDestination: Equatable {
     }
 }
 
-public enum LocalDestinationPlannerError: Error, Equatable {
+public enum LocalDestinationPlannerError: Error, Equatable, Sendable {
     case invalidRemotePath(String)
     case noAvailableLocalName(String)
 }

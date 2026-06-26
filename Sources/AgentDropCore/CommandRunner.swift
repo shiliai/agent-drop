@@ -1,6 +1,6 @@
 import Foundation
 
-public struct CommandInvocation: Equatable {
+public struct CommandInvocation: Equatable, Sendable {
     public let executable: String
     public let arguments: [String]
     public let standardInput: String?
@@ -12,7 +12,7 @@ public struct CommandInvocation: Equatable {
     }
 }
 
-public struct CommandResult: Equatable {
+public struct CommandResult: Equatable, Sendable {
     public let exitCode: Int32
     public let stdout: String
     public let stderr: String

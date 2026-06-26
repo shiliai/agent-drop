@@ -6,13 +6,312 @@ import AgentDropCore
 struct AgentDropApp: App {
     var body: some Scene {
         WindowGroup {
-            UploadHistoryView()
+            TransferWindowView()
         }
     }
 }
 
+private struct TransferWindowView: View {
+    @State private var selectedTab = TransferTab.history
+    @State private var historyRefreshToken = UUID()
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            UploadHistoryView(refreshToken: historyRefreshToken)
+                .tabItem {
+                    Label("History", systemImage: "clock")
+                }
+                .tag(TransferTab.history)
+
+            PullFormView {
+                historyRefreshToken = UUID()
+            }
+            .tabItem {
+                Label("Pull from...", systemImage: "arrow.down.circle")
+            }
+            .tag(TransferTab.pull)
+        }
+        .frame(minWidth: 820, minHeight: 500)
+    }
+}
+
+private enum TransferTab {
+    case history
+    case pull
+}
+
+private struct PullFormView: View {
+    let onHistoryRecorded: () -> Void
+
+    @State private var targets: [SSHTarget] = []
+    @State private var selectedTargetID: SSHTarget.ID?
+    @State private var remotePathText = ""
+    @State private var status = PullStatus.idle
+    @State private var isDownloading = false
+    @State private var didInitialLoad = false
+
+    private let store = UploadHistoryStore()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Pull from SSH")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                Button {
+                    loadTargets(applyClipboardPrefill: false)
+                } label: {
+                    Label("Refresh Targets", systemImage: "arrow.clockwise")
+                }
+                .disabled(isDownloading)
+            }
+
+            Form {
+                Picker("SSH Target", selection: $selectedTargetID) {
+                    Text("Select a target").tag(SSHTarget.ID?.none)
+                    ForEach(targets) { target in
+                        Text(targetLabel(for: target)).tag(SSHTarget.ID?.some(target.id))
+                    }
+                }
+                .disabled(isDownloading)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Remote Paths")
+                        .font(.headline)
+                    TextEditor(text: $remotePathText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 120)
+                        .scrollContentBackground(.hidden)
+                        .background(Color(nsColor: .textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(nsColor: .separatorColor))
+                        }
+                        .disabled(isDownloading)
+                }
+
+                LabeledContent("Destination") {
+                    Text("~/Downloads/Agent Drop/")
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
+            .formStyle(.grouped)
+
+            statusView
+
+            HStack {
+                Spacer()
+                Button {
+                    startDownload()
+                } label: {
+                    if isDownloading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Label("Download", systemImage: "arrow.down.circle")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .frame(minWidth: 120)
+                .disabled(isDownloading)
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            guard !didInitialLoad else { return }
+            didInitialLoad = true
+            loadTargets(applyClipboardPrefill: true)
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch status {
+        case .idle:
+            EmptyView()
+        case let .progress(message):
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(message)
+                    .foregroundStyle(.secondary)
+            }
+        case let .success(paths):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Downloaded and copied local paths.", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                Text(paths.joined(separator: "\n"))
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        case let .failure(message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+        }
+    }
+
+    private var selectedTarget: SSHTarget? {
+        guard let selectedTargetID else { return nil }
+        return targets.first { $0.id == selectedTargetID }
+    }
+
+    private func loadTargets(applyClipboardPrefill: Bool) {
+        let discoveredTargets = discoverTargets()
+        targets = discoveredTargets
+
+        if let selectedTargetID, !discoveredTargets.contains(where: { $0.id == selectedTargetID }) {
+            self.selectedTargetID = nil
+        }
+
+        if applyClipboardPrefill {
+            prefillFromClipboard(targets: discoveredTargets)
+        }
+    }
+
+    private func prefillFromClipboard(targets: [SSHTarget]) {
+        let clipboardText = NSPasteboard.general.string(forType: .string)
+        guard let prefill = PullFormPrefill.evaluate(clipboardText: clipboardText, targets: targets) else {
+            return
+        }
+
+        remotePathText = prefill.pathText
+        if let selectedTargetID = prefill.selectedTargetID {
+            self.selectedTargetID = selectedTargetID
+        }
+    }
+
+    private func startDownload() {
+        guard !isDownloading else { return }
+        status = .idle
+
+        guard let target = selectedTarget else {
+            status = .failure("Select an SSH target before downloading.")
+            return
+        }
+
+        let rawRemotePaths = normalizedInputLines(from: remotePathText)
+        guard !rawRemotePaths.isEmpty else {
+            status = .failure("Enter at least one remote path.")
+            return
+        }
+
+        let remotePaths: [RemotePath]
+        do {
+            remotePaths = try RemotePathParser.parse(remotePathText)
+        } catch {
+            let message = CLIErrorFormatter.message(for: error)
+            recordFailedDownload(target: target, remotePaths: rawRemotePaths, message: message)
+            status = .failure(message)
+            return
+        }
+
+        isDownloading = true
+        status = .progress("Downloading...")
+
+        Task {
+            let result = await runDownload(remotePaths: remotePaths, target: target)
+
+            await MainActor.run {
+                isDownloading = false
+
+                switch result {
+                case let .success(downloaded):
+                    if recordSucceededDownload(target: target, downloaded: downloaded) {
+                        status = .success(downloaded.map(\.localDisplayPath))
+                    }
+                case let .failure(error):
+                    let message = CLIErrorFormatter.message(for: error)
+                    recordFailedDownload(target: target, remotePaths: remotePaths.map(\.path), message: message)
+                    status = .failure(message)
+                }
+            }
+        }
+    }
+
+    private func runDownload(remotePaths: [RemotePath], target: SSHTarget) async -> Result<[DownloadedFile], Error> {
+        await Task.detached(priority: .userInitiated) {
+            do {
+                let downloaded = try DownloadService().download(remotePaths: remotePaths, target: target)
+                return .success(downloaded)
+            } catch {
+                return .failure(error)
+            }
+        }.value
+    }
+
+    private func recordSucceededDownload(target: SSHTarget, downloaded: [DownloadedFile]) -> Bool {
+        let entry = UploadHistoryEntry.downloadSucceeded(targetName: target.name, downloadedFiles: downloaded)
+        return recordHistory(entry)
+    }
+
+    private func recordFailedDownload(target: SSHTarget, remotePaths: [String], message: String) {
+        let entry = UploadHistoryEntry.downloadFailed(
+            targetName: target.name,
+            remotePaths: remotePaths,
+            errorDescription: message
+        )
+        _ = recordHistory(entry)
+    }
+
+    private func recordHistory(_ entry: UploadHistoryEntry) -> Bool {
+        do {
+            try store.append(entry)
+            onHistoryRecorded()
+            return true
+        } catch {
+            status = .failure("Could not record transfer history: \(CLIErrorFormatter.message(for: error))")
+            return false
+        }
+    }
+
+    private func discoverTargets() -> [SSHTarget] {
+        let runner = ProcessCommandRunner()
+        let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
+        let configured = SSHConfigParser().parse(configText)
+
+        let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
+        let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
+
+        return TargetResolver.merge(active: active, configured: configured)
+    }
+
+    private func targetLabel(for target: SSHTarget) -> String {
+        if target.name == target.connectName {
+            return "\(target.name) (\(target.source.rawValue))"
+        }
+        return "\(target.name) -> \(target.connectName) (\(target.source.rawValue))"
+    }
+
+    private func normalizedInputLines(from text: String) -> [String] {
+        text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+private enum PullStatus: Equatable {
+    case idle
+    case progress(String)
+    case success([String])
+    case failure(String)
+}
+
 private struct UploadHistoryView: View {
     @Environment(\.scenePhase) private var scenePhase
+    let refreshToken: UUID
+
     @State private var entries: [UploadHistoryEntry] = []
     @State private var selectedID: UploadHistoryEntry.ID?
     @State private var loadErrorMessage: String?
@@ -31,12 +330,14 @@ private struct UploadHistoryView: View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text("Recent Uploads")
+                    Text("Recent Transfers")
                         .font(.title2)
                         .fontWeight(.semibold)
                     Spacer()
-                    Button("Refresh") {
+                    Button {
                         loadHistory()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
                     }
                 }
 
@@ -48,9 +349,9 @@ private struct UploadHistoryView: View {
                     )
                 } else if entries.isEmpty {
                     ContentUnavailableView(
-                        "No uploads yet",
+                        "No transfers yet",
                         systemImage: "tray",
-                        description: Text("Right-click a file in Finder, choose Agent Drop, then select an SSH target.")
+                        description: Text("Right-click a file in Finder to upload, or use Pull from... to download remote paths.")
                     )
                 } else {
                     List(selection: $selectedID) {
@@ -81,13 +382,12 @@ private struct UploadHistoryView: View {
                 )
             } else {
                 ContentUnavailableView(
-                    "Select an upload",
+                    "Select a transfer",
                     systemImage: "doc.text.magnifyingglass",
-                    description: Text("Upload details and copyable remote paths will appear here.")
+                    description: Text("Transfer details and copyable paths will appear here.")
                 )
             }
         }
-        .frame(minWidth: 760, minHeight: 420)
         .onAppear {
             loadHistory()
             startHistoryWatcher()
@@ -106,6 +406,9 @@ private struct UploadHistoryView: View {
         .onChange(of: selectedID) { _, _ in
             statusMessage = nil
         }
+        .onChange(of: refreshToken) { _, _ in
+            loadHistory()
+        }
     }
 
     private func loadHistory() {
@@ -120,7 +423,7 @@ private struct UploadHistoryView: View {
         } catch {
             entries = []
             selectedID = nil
-            loadErrorMessage = "Could not read upload history."
+            loadErrorMessage = "Could not read transfer history."
             statusMessage = nil
         }
     }
@@ -213,9 +516,9 @@ private struct UploadHistoryRow: View {
     private var summary: String {
         let noun = entry.localFileNames.count == 1 ? "file" : "files"
         if entry.status == .succeeded {
-            return "\(entry.localFileNames.count) \(noun) uploaded"
+            return "\(entry.localFileNames.count) \(noun) \(entry.direction == .download ? "downloaded" : "uploaded")"
         }
-        return entry.errorMessage ?? "Upload failed"
+        return entry.errorMessage ?? "\(entry.direction == .download ? "Download" : "Upload") failed"
     }
 }
 
@@ -277,14 +580,14 @@ private struct UploadHistoryDetail: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Local Files")
+                    Text(entry.direction == .download ? "Local Paths" : "Local Files")
                         .font(.headline)
-                    ForEach(Array(entry.localFileNames.enumerated()), id: \.offset) { _, name in
-                        Text(name)
+                    ForEach(Array(localDisplayValues.enumerated()), id: \.offset) { _, value in
+                        Text(value)
                             .font(.system(.body, design: .monospaced))
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .help(name)
+                            .help(value)
                     }
                 }
 
@@ -304,9 +607,16 @@ private struct UploadHistoryDetail: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         if pasteboard.setString(payload, forType: .string) {
-            statusMessage = "Copied remote paths."
+            statusMessage = entry.direction == .download ? "Copied local paths." : "Copied remote paths."
         } else {
-            statusMessage = "Could not copy remote paths."
+            statusMessage = "Could not copy paths."
         }
+    }
+
+    private var localDisplayValues: [String] {
+        if entry.direction == .download, !entry.localDisplayPaths.isEmpty {
+            return entry.localDisplayPaths
+        }
+        return entry.localFileNames
     }
 }
