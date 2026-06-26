@@ -1,22 +1,25 @@
 # Agent Drop
 
-Agent Drop is a macOS tool for sending local files to a remote SSH development machine so coding agents can read them from a stable inbox.
+[简体中文](README.zh-CN.md)
+
+Agent Drop is a macOS tool for sending local files and folders to a remote SSH development machine so coding agents can read them from a stable inbox.
 
 The first version is designed around one fast workflow:
 
 ```text
-Right-click selected file(s)
+Right-click selected file(s) or folder(s)
   Agent Drop
     devbox
     gpu-box
     work-ubuntu
 ```
 
-After a target is selected, Agent Drop uploads the files to the remote machine and copies the final remote file paths to the Mac clipboard.
+After a target is selected, Agent Drop uploads the selected files and folders to the remote machine and copies the final remote paths to the Mac clipboard.
 
 ```text
 ~/.agent-inbox/2026-06-15/demo.png
 ~/.agent-inbox/2026-06-15/spec-2.pdf
+~/.agent-inbox/2026-06-15/project-folder
 ```
 
 You can then paste those paths into an existing SSH terminal for Codex, Claude Code, or another remote coding agent.
@@ -34,23 +37,23 @@ Recent uploads window:
 ## V1 Goals
 
 - Run on macOS.
-- Support Finder right-click delivery for selected files.
+- Support Finder right-click delivery for selected files and folders.
 - Show discovered SSH targets under an `Agent Drop` submenu.
 - Discover targets from `~/.ssh/config` and active SSH connections.
 - Upload through standard `ssh` and `rsync`.
-- Store files under the remote inbox root `~/.agent-inbox`.
-- Group uploaded files by date: `~/.agent-inbox/YYYY-MM-DD/`.
+- Store uploaded files and folders under the remote inbox root `~/.agent-inbox`.
+- Group uploaded paths by date: `~/.agent-inbox/YYYY-MM-DD/`.
 - Avoid overwrites by renaming conflicts, for example `demo-2.png`.
-- Copy final remote file paths, including filenames, to the Mac clipboard.
+- Copy final remote paths, including filenames or folder names, to the Mac clipboard.
 
 ## CLI Usage
 
-Agent Drop includes a CLI for checking dependencies, listing SSH targets, and sending files to an explicit target:
+Agent Drop includes a CLI for checking dependencies, listing SSH targets, and sending files or folders to an explicit target:
 
 ```bash
 agent-drop targets
 agent-drop doctor
-agent-drop send --target <target> <files...>
+agent-drop send --target <target> <paths...>
 ```
 
 The CLI does not implement an interactive target picker.
@@ -127,7 +130,7 @@ Run the CLI during development:
 ```bash
 swift run agent-drop doctor
 swift run agent-drop targets
-swift run agent-drop send --target devbox ./demo.png
+swift run agent-drop send --target devbox ./demo.png ./project-folder
 ```
 
 Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
@@ -153,8 +156,8 @@ Agent Drop records recent Finder uploads in the Finder extension container:
 
 The app reads that file to show `Recent Uploads`. Selecting a successful entry
 shows remote paths that can be copied again. Failed rows include a short error.
-The bottom status bar shows whether automatic refresh is active, the last
-history refresh time, and the app version/build.
+The bottom status bar shows the refresh status dot, the last history refresh
+time, and the app version/build.
 
 For this developer build path, the containing app is intentionally
 unsandboxed so it can read the Finder extension history file without requiring
@@ -169,8 +172,8 @@ printf 'AGENT_DROP_PENDING' | pbcopy
 open -R "$TEST_FILE"
 ```
 
-Then right-click the file in Finder, choose `Agent Drop -> x570 config` or
-another configured target, and verify:
+Then right-click the file or a test folder in Finder, choose
+`Agent Drop -> x570 config` or another configured target, and verify:
 
 ```bash
 pbpaste
@@ -178,8 +181,9 @@ ssh x570 'd="$HOME/.agent-inbox/$(date +%F)"; ls -l "$d"/agent-drop-ui-test*; wc
 tail -n 80 "$HOME/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log"
 ```
 
-Expected: `pbpaste` contains the final remote path, the remote file exists, and
-the diagnostic log records `upload success`.
+Expected: `pbpaste` contains the final remote path, the remote file or folder
+exists, directory uploads preserve their contents, and the diagnostic log
+records `upload success`.
 
 After a Finder upload, verify history was written:
 
@@ -196,4 +200,4 @@ Select the upload, reset the clipboard, click `Copy Paths`, and verify
 
 ## Status
 
-Agent Drop V1 is implemented on this branch. The repository includes the Swift package/core, CLI, macOS app, Finder Sync extension, core tests, XcodeGen project configuration, and documented local test/build workflow.
+Agent Drop V1 is implemented. The repository includes the Swift package/core, CLI, macOS app, Finder Sync extension, core tests, XcodeGen project configuration, and documented local test/build workflow.
