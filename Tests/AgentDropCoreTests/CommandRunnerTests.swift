@@ -51,6 +51,46 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertTrue(result.stdout.hasSuffix("stdin:captured-stdin"))
         XCTAssertEqual(result.stderr, "captured-stderr")
     }
+
+    func testPipelinePassesBinaryStdoutToConsumerStdinWithoutTextDecoding() throws {
+        let outputSize = 1024 * 1024
+        let producerScript = """
+        binmode STDOUT;
+        print STDOUT pack("C*", 0, 159, 255, 10);
+        print STDOUT "x" x \(outputSize);
+        print STDERR "producer-stderr";
+        """
+        let consumerScript = """
+        binmode STDIN;
+        my $data = do { local $/; <STDIN> };
+        print length($data);
+        print STDERR "consumer-stderr";
+        """
+
+        let result = try ProcessCommandRunner().runPipeline(
+            stdoutOf: CommandInvocation(executable: "/usr/bin/perl", arguments: ["-e", producerScript]),
+            intoStdinOf: CommandInvocation(executable: "/usr/bin/perl", arguments: ["-e", consumerScript])
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "\(outputSize + 4)")
+        XCTAssertTrue(result.stderr.contains("producer-stderr"))
+        XCTAssertTrue(result.stderr.contains("consumer-stderr"))
+    }
+
+    func testPipelineLaunchFailureDoesNotLeaveConsumerRunning() throws {
+        let runner = ProcessCommandRunner()
+        let script = "alarm 5; my $input = <STDIN>; print $input;"
+
+        XCTAssertThrowsError(try runner.runPipeline(
+            stdoutOf: CommandInvocation(executable: "/tmp/agent-drop-definitely-missing-command", arguments: []),
+            intoStdinOf: CommandInvocation(executable: "/usr/bin/perl", arguments: ["-e", script])
+        ))
+
+        let result = try runner.run(CommandInvocation(executable: "/bin/echo", arguments: ["still-runs"]))
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.stdout, "still-runs\n")
+    }
 }
 
 private func currentThreadCount() throws -> Int {

@@ -41,6 +41,16 @@ final class LocalDestinationPlannerTests: XCTestCase {
         }
     }
 
+    func testRejectsParentDirectoryBasename() throws {
+        let root = try makeLocalDestinationTemporaryDirectory()
+
+        for remotePath in ["/tmp/..", "~/runs/.."] {
+            XCTAssertThrowsError(try LocalDestinationPlanner().reserve(root: root, remotePath: remotePath, kind: .file)) { error in
+                XCTAssertEqual(error as? LocalDestinationPlannerError, .invalidRemotePath(remotePath))
+            }
+        }
+    }
+
     func testTreatsFileAndDirectoryConflictsTheSameWhenChoosingNextName() throws {
         let root = try makeLocalDestinationTemporaryDirectory()
         try FileManager.default.createDirectory(at: root.appendingPathComponent("output.png", isDirectory: true), withIntermediateDirectories: true)
