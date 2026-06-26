@@ -16,6 +16,7 @@ public struct DownloadedFile: Equatable {
 
 public enum DownloadError: Error, Equatable {
     case noRemotePaths
+    case hostHintMismatch(hostHint: String, selectedTarget: String)
     case remoteInspectionFailed(String)
     case unsupportedRemotePath(String)
     case destinationReservationFailed(String)
@@ -59,6 +60,7 @@ public final class DownloadService {
         var downloaded: [DownloadedFile] = []
 
         for remotePath in remotePaths {
+            try validate(remotePath: remotePath, target: target)
             let remoteKind = try inspect(remotePath: remotePath.path, target: target)
             let localKind = localDestinationKind(for: remoteKind)
             let reserved: ReservedLocalDestination
@@ -78,7 +80,7 @@ public final class DownloadService {
                     kind: remoteKind,
                     reservedDestination: reserved
                 )
-                try execute(plan)
+                try execute(plan, remotePath: remotePath.path, target: target)
                 downloaded.append(DownloadedFile(
                     remotePath: remotePath.path,
                     localURL: reserved.url,
@@ -108,16 +110,35 @@ public final class DownloadService {
             .appendingPathComponent("Agent Drop", isDirectory: true)
     }
 
+    private func validate(remotePath: RemotePath, target: SSHTarget) throws {
+        if let hostHint = remotePath.hostHint, hostHint != target.name, hostHint != target.connectName {
+            throw DownloadError.hostHintMismatch(hostHint: hostHint, selectedTarget: target.connectName)
+        }
+
+        guard isSupportedRemotePath(remotePath.path) else {
+            throw DownloadError.unsupportedRemotePath(remotePath.path)
+        }
+    }
+
+    private func isSupportedRemotePath(_ path: String) -> Bool {
+        path.hasPrefix("~/") || path.hasPrefix("/")
+    }
+
     private func inspect(remotePath: String, target: SSHTarget) throws -> RemotePathKind {
         let result = try runner.run(DownloadTransferPlanner.remoteInspectionCommand(target: target, remotePath: remotePath))
         guard result.succeeded else {
-            throw DownloadError.remoteInspectionFailed(result.stderr)
+            throw DownloadError.remoteInspectionFailed(failureMessage(
+                target: target,
+                remotePath: remotePath,
+                action: "inspection failed",
+                result: result
+            ))
         }
 
-        return try parseInspection(stdout: result.stdout)
+        return try parseInspection(stdout: result.stdout, remotePath: remotePath, target: target)
     }
 
-    private func parseInspection(stdout: String) throws -> RemotePathKind {
+    private func parseInspection(stdout: String, remotePath: String, target: SSHTarget) throws -> RemotePathKind {
         let lines = stdout.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         if lines == ["file", ""] {
@@ -127,12 +148,20 @@ public final class DownloadService {
         if lines.count == 3, lines[0] == "directory", lines[2] == "" {
             let countText = lines[1].trimmingCharacters(in: .whitespacesAndNewlines)
             guard let count = Int(countText), count >= 0 else {
-                throw DownloadError.remoteInspectionFailed(stdout)
+                throw DownloadError.remoteInspectionFailed(unrecognizedInspectionMessage(
+                    target: target,
+                    remotePath: remotePath,
+                    stdout: stdout
+                ))
             }
             return .directory(fileCount: count)
         }
 
-        throw DownloadError.remoteInspectionFailed(stdout)
+        throw DownloadError.remoteInspectionFailed(unrecognizedInspectionMessage(
+            target: target,
+            remotePath: remotePath,
+            stdout: stdout
+        ))
     }
 
     private func localDestinationKind(for remoteKind: RemotePathKind) -> LocalDestinationKind {
@@ -144,19 +173,56 @@ public final class DownloadService {
         }
     }
 
-    private func execute(_ plan: DownloadTransferPlan) throws {
+    private func execute(_ plan: DownloadTransferPlan, remotePath: String, target: SSHTarget) throws {
         switch plan.execution {
         case let .command(invocation):
             let result = try runner.run(invocation)
             guard result.succeeded else {
-                throw DownloadError.rsyncFailed(result.stderr)
+                throw DownloadError.rsyncFailed(failureMessage(
+                    target: target,
+                    remotePath: remotePath,
+                    action: "transfer failed",
+                    invocationDescription: invocation.executable,
+                    result: result
+                ))
             }
         case let .pipeline(remoteArchiveInvocation, localExtractInvocation):
             let result = try pipelineRunner.runPipeline(stdoutOf: remoteArchiveInvocation, intoStdinOf: localExtractInvocation)
             guard result.succeeded else {
-                throw DownloadError.tarFailed(result.stderr)
+                throw DownloadError.tarFailed(failureMessage(
+                    target: target,
+                    remotePath: remotePath,
+                    action: "tar pipeline failed",
+                    invocationDescription: "\(remoteArchiveInvocation.executable) | \(localExtractInvocation.executable)",
+                    result: result
+                ))
             }
         }
+    }
+
+    private func failureMessage(
+        target: SSHTarget,
+        remotePath: String,
+        action: String,
+        invocationDescription: String? = nil,
+        result: CommandResult
+    ) -> String {
+        let commandContext = invocationDescription.map { " using \($0)" } ?? ""
+        return "target \(target.connectName) remote path \(remotePath) \(action) with exit code \(result.exitCode)\(commandContext): \(resultOutput(result))"
+    }
+
+    private func unrecognizedInspectionMessage(target: SSHTarget, remotePath: String, stdout: String) -> String {
+        "target \(target.connectName) remote path \(remotePath) inspection produced unrecognized output: \(cleanOutput(stdout))"
+    }
+
+    private func resultOutput(_ result: CommandResult) -> String {
+        let output = result.stderr.isEmpty ? result.stdout : result.stderr
+        return cleanOutput(output)
+    }
+
+    private func cleanOutput(_ output: String) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "<no output>" : trimmed
     }
 
     private func destinationReservationError(from error: LocalDestinationPlannerError) -> DownloadError {

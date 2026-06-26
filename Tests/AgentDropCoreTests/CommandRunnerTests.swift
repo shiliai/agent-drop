@@ -91,6 +91,43 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.stdout, "still-runs\n")
     }
+
+    func testPipelineRunsRealTarRoundTrip() throws {
+        let root = try makeCommandRunnerTemporaryDirectory()
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let destination = root.appendingPathComponent("destination", isDirectory: true)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        try "payload".write(to: source.appendingPathComponent("nested.txt"), atomically: true, encoding: .utf8)
+
+        let result = try ProcessCommandRunner().runPipeline(
+            stdoutOf: CommandInvocation(
+                executable: "/usr/bin/tar",
+                arguments: ["-czf", "-", "-C", source.path, "."]
+            ),
+            intoStdinOf: CommandInvocation(
+                executable: "/usr/bin/tar",
+                arguments: ["-xzf", "-", "-C", destination.path]
+            )
+        )
+
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(try String(contentsOf: destination.appendingPathComponent("nested.txt"), encoding: .utf8), "payload")
+    }
+
+    func testPipelineReportsConsumerFailureAfterLaunch() throws {
+        let producerScript = "print STDOUT \"payload\";"
+        let consumerScript = "while (<STDIN>) {}; print STDERR \"consumer failed\"; exit 7;"
+
+        let result = try ProcessCommandRunner().runPipeline(
+            stdoutOf: CommandInvocation(executable: "/usr/bin/perl", arguments: ["-e", producerScript]),
+            intoStdinOf: CommandInvocation(executable: "/usr/bin/perl", arguments: ["-e", consumerScript])
+        )
+
+        XCTAssertEqual(result.exitCode, 7)
+        XCTAssertEqual(result.stdout, "")
+        XCTAssertTrue(result.stderr.contains("consumer failed"))
+    }
 }
 
 private func currentThreadCount() throws -> Int {
@@ -103,4 +140,11 @@ private func currentThreadCount() throws -> Int {
     }
 
     return Int(info.ptinfo.pti_threadnum)
+}
+
+private func makeCommandRunnerTemporaryDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
 }

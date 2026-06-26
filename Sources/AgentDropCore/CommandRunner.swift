@@ -120,12 +120,17 @@ public struct ProcessCommandRunner: CommandRunning, CommandPiping {
         } catch {
             if producer.isRunning {
                 producer.terminate()
+                producer.waitUntilExit()
             }
             if consumer.isRunning {
                 consumer.terminate()
+                consumer.waitUntilExit()
             }
             try? archivePipe.fileHandleForReading.close()
             try? archivePipe.fileHandleForWriting.close()
+            try? producerStderr.fileHandleForReading.close()
+            try? consumerStdout.fileHandleForReading.close()
+            try? consumerStderr.fileHandleForReading.close()
             throw error
         }
 

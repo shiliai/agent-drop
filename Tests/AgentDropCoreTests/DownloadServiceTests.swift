@@ -52,6 +52,104 @@ final class DownloadServiceTests: XCTestCase {
         ])
     }
 
+    func testMatchingHostHintByTargetNameProceedsNormally() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let target = SSHTarget(name: "GPU Box", connectName: "gpu-box.internal", source: .config)
+        let runner = FakeDownloadCommandRunner(results: [
+            .success(stdout: "file\n", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let service = DownloadService(
+            runner: runner,
+            pipelineRunner: FakeDownloadPipelineRunner(results: []),
+            clipboard: FakeDownloadClipboard()
+        )
+
+        let downloaded = try service.download(
+            remotePaths: [RemotePath(hostHint: "GPU Box", path: "~/runs/output.png")],
+            target: target,
+            destinationRoot: root,
+            copyToClipboard: false
+        )
+
+        XCTAssertEqual(downloaded.map(\.remotePath), ["~/runs/output.png"])
+        XCTAssertEqual(runner.invocations.first, DownloadTransferPlanner.remoteInspectionCommand(target: target, remotePath: "~/runs/output.png"))
+    }
+
+    func testMatchingHostHintByTargetConnectNameProceedsNormally() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let target = SSHTarget(name: "GPU Box", connectName: "gpu-box.internal", source: .config)
+        let runner = FakeDownloadCommandRunner(results: [
+            .success(stdout: "file\n", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let service = DownloadService(
+            runner: runner,
+            pipelineRunner: FakeDownloadPipelineRunner(results: []),
+            clipboard: FakeDownloadClipboard()
+        )
+
+        let downloaded = try service.download(
+            remotePaths: [RemotePath(hostHint: "gpu-box.internal", path: "~/runs/output.png")],
+            target: target,
+            destinationRoot: root,
+            copyToClipboard: false
+        )
+
+        XCTAssertEqual(downloaded.map(\.remotePath), ["~/runs/output.png"])
+        XCTAssertEqual(runner.invocations.first, DownloadTransferPlanner.remoteInspectionCommand(target: target, remotePath: "~/runs/output.png"))
+    }
+
+    func testHostHintMismatchFailsBeforeInspectionTransferOrClipboard() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let runner = FakeDownloadCommandRunner(results: [
+            .success(stdout: "file\n", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeDownloadClipboard()
+        let service = DownloadService(
+            runner: runner,
+            pipelineRunner: FakeDownloadPipelineRunner(results: []),
+            clipboard: clipboard
+        )
+
+        XCTAssertThrowsError(try service.download(
+            remotePaths: [RemotePath(hostHint: "gpu-box", path: "~/runs/output.png")],
+            target: target,
+            destinationRoot: root
+        )) { error in
+            XCTAssertEqual(error as? DownloadError, .hostHintMismatch(hostHint: "gpu-box", selectedTarget: "devbox"))
+        }
+        XCTAssertEqual(runner.invocations, [])
+        XCTAssertNil(clipboard.text)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    func testUnsupportedRemotePathFailsBeforeInspectionTransferOrClipboard() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let runner = FakeDownloadCommandRunner(results: [
+            .success(stdout: "file\n", stderr: ""),
+            .success(stdout: "", stderr: "")
+        ])
+        let clipboard = FakeDownloadClipboard()
+        let service = DownloadService(
+            runner: runner,
+            pipelineRunner: FakeDownloadPipelineRunner(results: []),
+            clipboard: clipboard
+        )
+
+        XCTAssertThrowsError(try service.download(
+            remotePaths: [RemotePath(hostHint: nil, path: "relative/output.png")],
+            target: target,
+            destinationRoot: root
+        )) { error in
+            XCTAssertEqual(error as? DownloadError, .unsupportedRemotePath("relative/output.png"))
+        }
+        XCTAssertEqual(runner.invocations, [])
+        XCTAssertNil(clipboard.text)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
     func testRepeatedPullUsesNonOverwritingLocalName() throws {
         let root = try makeDownloadTemporaryDirectory()
         FileManager.default.createFile(atPath: root.appendingPathComponent("output.png").path, contents: Data())
@@ -162,10 +260,29 @@ final class DownloadServiceTests: XCTestCase {
             target: target,
             destinationRoot: root
         )) { error in
-            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("not found"))
+            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("target devbox remote path ~/runs/missing.png inspection failed with exit code 2: not found"))
         }
         XCTAssertNil(clipboard.text)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
+    }
+
+    func testRemoteInspectionFailureUsesStdoutFallbackWhenStderrIsEmpty() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let service = DownloadService(
+            runner: FakeDownloadCommandRunner(results: [
+                .failure(exitCode: 2, stdout: "missing from stdout", stderr: "")
+            ]),
+            pipelineRunner: FakeDownloadPipelineRunner(results: []),
+            clipboard: FakeDownloadClipboard()
+        )
+
+        XCTAssertThrowsError(try service.download(
+            remotePaths: [RemotePath(hostHint: nil, path: "~/runs/missing.png")],
+            target: target,
+            destinationRoot: root
+        )) { error in
+            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("target devbox remote path ~/runs/missing.png inspection failed with exit code 2: missing from stdout"))
+        }
     }
 
     func testUnrecognizedInspectionStdoutFailsAndCleansReservation() throws {
@@ -184,7 +301,7 @@ final class DownloadServiceTests: XCTestCase {
             target: target,
             destinationRoot: root
         )) { error in
-            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("symlink\n"))
+            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("target devbox remote path ~/runs/output.png inspection produced unrecognized output: symlink"))
         }
         XCTAssertNil(clipboard.text)
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), [])
@@ -207,10 +324,30 @@ final class DownloadServiceTests: XCTestCase {
             target: target,
             destinationRoot: root
         )) { error in
-            XCTAssertEqual(error as? DownloadError, .rsyncFailed("rsync failed"))
+            XCTAssertEqual(error as? DownloadError, .rsyncFailed("target devbox remote path ~/runs/output.png transfer failed with exit code 23 using /usr/bin/rsync: rsync failed"))
         }
         XCTAssertNil(clipboard.text)
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("output.png").path))
+    }
+
+    func testRsyncFailureUsesStdoutFallbackWhenStderrIsEmpty() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let service = DownloadService(
+            runner: FakeDownloadCommandRunner(results: [
+                .success(stdout: "file\n", stderr: ""),
+                .failure(exitCode: 23, stdout: "rsync stdout failure", stderr: "")
+            ]),
+            pipelineRunner: FakeDownloadPipelineRunner(results: []),
+            clipboard: FakeDownloadClipboard()
+        )
+
+        XCTAssertThrowsError(try service.download(
+            remotePaths: [RemotePath(hostHint: nil, path: "~/runs/output.png")],
+            target: target,
+            destinationRoot: root
+        )) { error in
+            XCTAssertEqual(error as? DownloadError, .rsyncFailed("target devbox remote path ~/runs/output.png transfer failed with exit code 23 using /usr/bin/rsync: rsync stdout failure"))
+        }
     }
 
     func testTarPipelineFailureRemovesReservedDirectoryAndDoesNotWriteClipboard() throws {
@@ -231,10 +368,31 @@ final class DownloadServiceTests: XCTestCase {
             target: target,
             destinationRoot: root
         )) { error in
-            XCTAssertEqual(error as? DownloadError, .tarFailed("tar failed"))
+            XCTAssertEqual(error as? DownloadError, .tarFailed("target devbox remote path /tmp/artifacts tar pipeline failed with exit code 2 using /usr/bin/ssh | /usr/bin/tar: tar failed"))
         }
         XCTAssertNil(clipboard.text)
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("artifacts", isDirectory: true).path))
+    }
+
+    func testTarFailureUsesStdoutFallbackWhenStderrIsEmpty() throws {
+        let root = try makeDownloadTemporaryDirectory()
+        let service = DownloadService(
+            runner: FakeDownloadCommandRunner(results: [
+                .success(stdout: "directory\n201\n", stderr: "")
+            ]),
+            pipelineRunner: FakeDownloadPipelineRunner(results: [
+                .failure(exitCode: 2, stdout: "tar stdout failure", stderr: "")
+            ]),
+            clipboard: FakeDownloadClipboard()
+        )
+
+        XCTAssertThrowsError(try service.download(
+            remotePaths: [RemotePath(hostHint: nil, path: "/tmp/artifacts")],
+            target: target,
+            destinationRoot: root
+        )) { error in
+            XCTAssertEqual(error as? DownloadError, .tarFailed("target devbox remote path /tmp/artifacts tar pipeline failed with exit code 2 using /usr/bin/ssh | /usr/bin/tar: tar stdout failure"))
+        }
     }
 
     func testClipboardFailureAfterTransferPreservesDownloadedOutput() throws {
@@ -301,7 +459,7 @@ final class DownloadServiceTests: XCTestCase {
             target: target,
             destinationRoot: root
         )) { error in
-            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("missing"))
+            XCTAssertEqual(error as? DownloadError, .remoteInspectionFailed("target devbox remote path ~/runs/second.png inspection failed with exit code 2: missing"))
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("first.png").path))
         XCTAssertNil(clipboard.text)
