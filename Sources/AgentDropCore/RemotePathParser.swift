@@ -30,6 +30,10 @@ public enum RemotePathParser {
     }
 
     private static func parseLine(_ line: String) throws -> RemotePath {
+        if isSupportedRemotePath(line) {
+            return RemotePath(hostHint: nil, path: line)
+        }
+
         if let colonIndex = line.firstIndex(of: ":") {
             let host = String(line[..<colonIndex])
             let pathStart = line.index(after: colonIndex)
@@ -41,12 +45,7 @@ public enum RemotePathParser {
 
             return RemotePath(hostHint: host, path: path)
         }
-
-        guard isSupportedRemotePath(line) else {
-            throw RemotePathParserError.unsupportedRelativePath(line)
-        }
-
-        return RemotePath(hostHint: nil, path: line)
+        throw RemotePathParserError.unsupportedRelativePath(line)
     }
 
     private static func isSupportedRemotePath(_ value: String) -> Bool {

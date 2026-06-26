@@ -36,12 +36,13 @@ final class DownloadTransferPlannerTests: XCTestCase {
         )
 
         XCTAssertEqual(plan.strategy, .rsyncFile)
-        XCTAssertEqual(plan.invocations, [
-            CommandInvocation(
+        XCTAssertEqual(
+            plan.execution,
+            .command(CommandInvocation(
                 executable: "/usr/bin/rsync",
                 arguments: ["-a", "devbox:$HOME/'runs/output file.png'", "/Users/chris/Downloads/Agent Drop/output file.png"]
-            )
-        ])
+            ))
+        )
     }
 
     func testBuildsRsyncDirectoryCommandWithTrailingSlashes() {
@@ -57,15 +58,16 @@ final class DownloadTransferPlannerTests: XCTestCase {
         )
 
         XCTAssertEqual(plan.strategy, .rsyncDirectory)
-        XCTAssertEqual(plan.invocations, [
-            CommandInvocation(
+        XCTAssertEqual(
+            plan.execution,
+            .command(CommandInvocation(
                 executable: "/usr/bin/rsync",
                 arguments: ["-a", "devbox:'/tmp/build-artifacts'/", "/Users/chris/Downloads/Agent Drop/build-artifacts/"]
-            )
-        ])
+            ))
+        )
     }
 
-    func testBuildsTarStreamInvocationsWithShellQuoting() {
+    func testBuildsTarStreamPipelineWithShellQuoting() {
         let reserved = ReservedLocalDestination(
             url: URL(fileURLWithPath: "/Users/chris/Downloads/Agent Drop/client reports", isDirectory: true),
             kind: .directory
@@ -78,15 +80,18 @@ final class DownloadTransferPlannerTests: XCTestCase {
         )
 
         XCTAssertEqual(plan.strategy, .tarStream)
-        XCTAssertEqual(plan.invocations, [
-            CommandInvocation(
+        XCTAssertEqual(
+            plan.execution,
+            .pipeline(
+                remoteArchiveInvocation: CommandInvocation(
                 executable: "/usr/bin/ssh",
                 arguments: ["devbox", "tar -C '/tmp/client'\"'\"'s reports' -czf - ."]
-            ),
-            CommandInvocation(
-                executable: "/usr/bin/tar",
-                arguments: ["-xzf", "-", "-C", "/Users/chris/Downloads/Agent Drop/client reports"]
+                ),
+                localExtractInvocation: CommandInvocation(
+                    executable: "/usr/bin/tar",
+                    arguments: ["-xzf", "-", "-C", "/Users/chris/Downloads/Agent Drop/client reports"]
+                )
             )
-        ])
+        )
     }
 }

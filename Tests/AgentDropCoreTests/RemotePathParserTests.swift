@@ -35,4 +35,16 @@ final class RemotePathParserTests: XCTestCase {
             XCTAssertEqual(error as? RemotePathParserError, .unsupportedRelativePath("devbox:runs/output.png"))
         }
     }
+
+    func testKeepsColonsInsideAbsoluteAndHomePathFilenames() throws {
+        let paths = try RemotePathParser.parse("""
+        /tmp/report:final.txt
+        ~/runs/a:b.txt
+        """)
+
+        XCTAssertEqual(paths, [
+            RemotePath(hostHint: nil, path: "/tmp/report:final.txt"),
+            RemotePath(hostHint: nil, path: "~/runs/a:b.txt")
+        ])
+    }
 }

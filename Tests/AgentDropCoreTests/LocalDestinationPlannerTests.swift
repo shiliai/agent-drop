@@ -32,6 +32,49 @@ final class LocalDestinationPlannerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: reserved.url.path))
         XCTAssertTrue(isDirectory(root.appendingPathComponent("build-artifacts", isDirectory: true)))
     }
+
+    func testRejectsInvalidRemoteBasename() throws {
+        let root = try makeLocalDestinationTemporaryDirectory()
+
+        XCTAssertThrowsError(try LocalDestinationPlanner().reserve(root: root, remotePath: "~/", kind: .file)) { error in
+            XCTAssertEqual(error as? LocalDestinationPlannerError, .invalidRemotePath("~/"))
+        }
+    }
+
+    func testTreatsFileAndDirectoryConflictsTheSameWhenChoosingNextName() throws {
+        let root = try makeLocalDestinationTemporaryDirectory()
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("output.png", isDirectory: true), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: root.appendingPathComponent("assets").path, contents: Data())
+
+        let fileReservation = try LocalDestinationPlanner().reserve(root: root, remotePath: "/tmp/output.png", kind: .file)
+        let directoryReservation = try LocalDestinationPlanner().reserve(root: root, remotePath: "/tmp/assets", kind: .directory)
+
+        XCTAssertEqual(fileReservation.url.lastPathComponent, "output-2.png")
+        XCTAssertEqual(directoryReservation.url.lastPathComponent, "assets-2")
+    }
+
+    func testFailsAfterExhaustingCandidateRange() throws {
+        let root = try makeLocalDestinationTemporaryDirectory()
+        for name in LocalNamePlanner(originalName: "output.png").candidates(prefixCount: 100) {
+            FileManager.default.createFile(atPath: root.appendingPathComponent(name).path, contents: Data())
+        }
+
+        XCTAssertThrowsError(try LocalDestinationPlanner().reserve(root: root, remotePath: "/tmp/output.png", kind: .file)) { error in
+            XCTAssertEqual(error as? LocalDestinationPlannerError, .noAvailableLocalName("output.png"))
+        }
+    }
+
+    func testCleanupRemovesPartialDirectoryContents() throws {
+        let root = try makeLocalDestinationTemporaryDirectory()
+        let reserved = try LocalDestinationPlanner().reserve(root: root, remotePath: "/tmp/build-artifacts", kind: .directory)
+        let partial = reserved.url.appendingPathComponent("nested/output.txt")
+        try FileManager.default.createDirectory(at: partial.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: partial.path, contents: Data())
+
+        try reserved.cleanup()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: reserved.url.path))
+    }
 }
 
 private func makeLocalDestinationTemporaryDirectory() throws -> URL {

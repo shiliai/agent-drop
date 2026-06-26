@@ -83,10 +83,14 @@ public struct LocalDestinationPlanner {
     }
 
     private func remoteBasename(_ remotePath: String) throws -> String {
+        guard remotePath != "~/", remotePath != "/" else {
+            throw LocalDestinationPlannerError.invalidRemotePath(remotePath)
+        }
+
         let trimmed = String(remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
         let basename = (trimmed as NSString).lastPathComponent
 
-        guard !basename.isEmpty, basename != "." else {
+        guard !basename.isEmpty, basename != ".", basename != "~" else {
             throw LocalDestinationPlannerError.invalidRemotePath(remotePath)
         }
 

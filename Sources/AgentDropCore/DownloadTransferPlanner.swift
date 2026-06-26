@@ -11,13 +11,18 @@ public enum DownloadTransferStrategy: Equatable {
     case tarStream
 }
 
+public enum DownloadTransferExecution: Equatable {
+    case command(CommandInvocation)
+    case pipeline(remoteArchiveInvocation: CommandInvocation, localExtractInvocation: CommandInvocation)
+}
+
 public struct DownloadTransferPlan: Equatable {
     public let strategy: DownloadTransferStrategy
-    public let invocations: [CommandInvocation]
+    public let execution: DownloadTransferExecution
 
-    public init(strategy: DownloadTransferStrategy, invocations: [CommandInvocation]) {
+    public init(strategy: DownloadTransferStrategy, execution: DownloadTransferExecution) {
         self.strategy = strategy
-        self.invocations = invocations
+        self.execution = execution
     }
 }
 
@@ -49,18 +54,22 @@ public enum DownloadTransferPlanner {
         reservedDestination: ReservedLocalDestination
     ) -> DownloadTransferPlan {
         let strategy = strategy(for: kind)
-        let invocations: [CommandInvocation]
+        let execution: DownloadTransferExecution
 
         switch strategy {
         case .rsyncFile:
-            invocations = [rsyncFileCommand(target: target, remotePath: remotePath, localURL: reservedDestination.url)]
+            execution = .command(rsyncFileCommand(target: target, remotePath: remotePath, localURL: reservedDestination.url))
         case .rsyncDirectory:
-            invocations = [rsyncDirectoryCommand(target: target, remotePath: remotePath, localURL: reservedDestination.url)]
+            execution = .command(rsyncDirectoryCommand(target: target, remotePath: remotePath, localURL: reservedDestination.url))
         case .tarStream:
-            invocations = tarStreamCommands(target: target, remotePath: remotePath, localURL: reservedDestination.url)
+            let pipeline = tarStreamPipeline(target: target, remotePath: remotePath, localURL: reservedDestination.url)
+            execution = .pipeline(
+                remoteArchiveInvocation: pipeline.remoteArchiveInvocation,
+                localExtractInvocation: pipeline.localExtractInvocation
+            )
         }
 
-        return DownloadTransferPlan(strategy: strategy, invocations: invocations)
+        return DownloadTransferPlan(strategy: strategy, execution: execution)
     }
 
     public static func rsyncFileCommand(target: SSHTarget, remotePath: String, localURL: URL) -> CommandInvocation {
@@ -77,17 +86,21 @@ public enum DownloadTransferPlanner {
         )
     }
 
-    public static func tarStreamCommands(target: SSHTarget, remotePath: String, localURL: URL) -> [CommandInvocation] {
-        [
-            CommandInvocation(
+    public static func tarStreamPipeline(
+        target: SSHTarget,
+        remotePath: String,
+        localURL: URL
+    ) -> (remoteArchiveInvocation: CommandInvocation, localExtractInvocation: CommandInvocation) {
+        (
+            remoteArchiveInvocation: CommandInvocation(
                 executable: "/usr/bin/ssh",
                 arguments: [target.connectName, "tar -C \(remoteShellPath(remotePath)) -czf - ."]
             ),
-            CommandInvocation(
+            localExtractInvocation: CommandInvocation(
                 executable: "/usr/bin/tar",
                 arguments: ["-xzf", "-", "-C", localURL.path]
             )
-        ]
+        )
     }
 
     private static func remoteShellPath(_ remotePath: String) -> String {
