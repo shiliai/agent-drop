@@ -31,13 +31,9 @@ Agent Drop 也可以把已知的远程文件或文件夹拉回 Mac。使用
 
 ## 截图
 
-Finder 右键菜单：
+Finder 上传和 pull 工作流：
 
-![Agent Drop Finder 右键菜单](docs/assets/agent-drop-finder-menu.png)
-
-传输历史窗口：
-
-![Agent Drop 传输历史窗口](docs/assets/agent-drop-app.png)
+![Agent Drop Finder 上传和 pull 工作流](docs/assets/agent-drop-workflow.png)
 
 ## V1 功能
 

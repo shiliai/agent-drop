@@ -30,15 +30,11 @@ Agent Drop can also pull known remote files or folders back to the Mac. Use
 and downloaded items land in `~/Downloads/Agent Drop/`. On success, the final
 local paths are copied to the Mac clipboard.
 
-## Screenshots
+## Screenshot
 
-Finder right-click menu:
+Finder upload and pull workflow:
 
-![Agent Drop Finder context menu](docs/assets/agent-drop-finder-menu.png)
-
-Recent transfers window:
-
-![Agent Drop recent transfers window](docs/assets/agent-drop-app.png)
+![Agent Drop Finder upload and pull workflow](docs/assets/agent-drop-workflow.png)
 
 ## V1 Goals
 
