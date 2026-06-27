@@ -173,7 +173,8 @@ final class FinderSync: FIFinderSync {
     }
 
     private static func menuIcon() -> NSImage {
-        let image = NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Agent Drop")
+        let image = NSImage(named: "AgentDropMenuIcon")
+            ?? NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Agent Drop")
             ?? Self.textIcon("⇧")
         image.isTemplate = true
         image.size = NSSize(width: 16, height: 16)
