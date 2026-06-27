@@ -320,6 +320,8 @@ private struct HostListView: View {
                     }
                 }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .windowBackgroundColor))
             }
         }
         .padding(12)
