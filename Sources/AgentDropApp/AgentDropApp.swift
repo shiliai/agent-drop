@@ -70,6 +70,7 @@ private struct PullFormView: View {
     @State private var selectedTargetID: SSHTarget.ID?
     @State private var remotePathText = ""
     @State private var status = PullStatus.idle
+    @State private var dependencyFeedback: DependencyFeedback?
     @State private var isDownloading = false
     @State private var didInitialLoad = false
     @State private var activePullOperationID: UUID?
@@ -127,6 +128,7 @@ private struct PullFormView: View {
             .formStyle(.grouped)
 
             statusView
+            dependencyStatusView
 
             HStack {
                 Spacer()
@@ -142,7 +144,7 @@ private struct PullFormView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .frame(minWidth: 120)
-                .disabled(isDownloading)
+                .disabled(isDownloading || dependencyFeedback != nil)
             }
         }
         .padding(24)
@@ -185,12 +187,22 @@ private struct PullFormView: View {
         }
     }
 
+    @ViewBuilder
+    private var dependencyStatusView: some View {
+        if let dependencyFeedback {
+            Label(dependencyFeedback.message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .textSelection(.enabled)
+        }
+    }
+
     private var selectedTarget: SSHTarget? {
         guard let selectedTargetID else { return nil }
         return targets.first { $0.id == selectedTargetID }
     }
 
     private func loadTargets(applyClipboardPrefill: Bool) {
+        dependencyFeedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .appPull)
         let discoveredTargets = discoverTargets()
         targets = discoveredTargets
 
@@ -220,6 +232,12 @@ private struct PullFormView: View {
         let operationID = UUID()
         activePullOperationID = operationID
         status = .idle
+
+        dependencyFeedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .appPull)
+        if let dependencyFeedback {
+            status = .failure(dependencyFeedback.message)
+            return
+        }
 
         guard let target = selectedTarget else {
             status = .failure("Select an SSH target before downloading.")

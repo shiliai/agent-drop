@@ -50,6 +50,8 @@ Finder upload and pull workflow:
   `build-artifacts-2`.
 - Copy final remote paths, including filenames or folder names, to the Mac clipboard.
 - Copy final local paths after successful pulls.
+- Check required local tools before Finder uploads and app pulls, then show
+  setup feedback without installing dependencies automatically.
 
 ## CLI Usage
 
@@ -73,6 +75,10 @@ agent-drop pull --target devbox devbox:~/runs/output.png
 
 The CLI does not implement an interactive target picker. If exactly one SSH
 target is discovered, `send` and `pull` can use it when `--target` is omitted.
+
+`doctor`, Finder uploads, and app pulls check required local tools such as
+`ssh`, `rsync`, `tar`, and `pbcopy`. Agent Drop reports missing tools clearly,
+but it never installs dependencies automatically.
 
 ## Not In V1
 

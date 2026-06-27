@@ -48,6 +48,7 @@ Finder 上传和 pull 工作流：
 - 遇到重名时自动改名，例如 `demo-2.png` 或 `build-artifacts-2`。
 - 把最终远程路径复制到 Mac 剪贴板，路径包含文件名或文件夹名。
 - pull 成功后，把最终本地路径复制到 Mac 剪贴板。
+- 在 Finder 上传和 App pull 前检查本地依赖，缺失时给出反馈，但不会自动安装。
 - 在 App 里显示最近上传历史、成功/失败状态、最后刷新时间和版本号。
 
 文件夹上传会在远端保留同名目录，并把选中文件夹里的内容同步到这个远程目录里。
@@ -73,6 +74,9 @@ agent-drop pull --target devbox devbox:~/runs/output.png
 
 CLI 不提供交互式目标选择器。如果只发现一个 SSH 目标，`send` 和 `pull`
 可以在省略 `--target` 时使用它。
+
+`doctor`、Finder 上传和 App pull 都会检查 `ssh`、`rsync`、`tar`、`pbcopy`
+等本地工具。Agent Drop 会明确提示缺失依赖，但不会自动安装。
 
 ## V1 不包含
 

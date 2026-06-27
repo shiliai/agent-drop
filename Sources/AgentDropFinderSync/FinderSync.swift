@@ -73,6 +73,12 @@ final class FinderSync: FIFinderSync {
         Self.recordDiagnostic("send requested target=\(connectName) selected=\(urls.map(\.path).joined(separator: ", "))")
 
         DispatchQueue.global(qos: .userInitiated).async {
+            if let feedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .finderUpload) {
+                Self.recordDiagnostic("send rejected target=\(connectName) reason=missing dependencies tools=\(feedback.missingToolNames.joined(separator: ","))")
+                Self.notify(title: "Agent Drop needs setup", body: feedback.message)
+                return
+            }
+
             let selection = FileSelection.validate(urls)
             if let failureMessage = Self.selectionFailureMessage(urls: urls, selection: selection) {
                 Self.recordDiagnostic("send rejected target=\(connectName) reason=\(failureMessage)")
