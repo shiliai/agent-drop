@@ -14,6 +14,17 @@
     <string>Agent Drop</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>ai.shili.AgentDrop.route</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>agentdrop</string>
+            </array>
+        </dict>
+    </array>
     <key>CFBundleShortVersionString</key>
     <string>0.2.0</string>
     <key>CFBundleVersion</key>

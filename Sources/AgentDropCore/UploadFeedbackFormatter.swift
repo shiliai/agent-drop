@@ -14,8 +14,12 @@ public enum UploadFeedbackFormatter {
     }
 
     public static func shortReason(from errorDescription: String) -> String {
-        if let uploadError = parseUploadError(from: errorDescription) {
-            return trimSentence(uploadError)
+        if let wrappedError = parseWrappedError(from: errorDescription) {
+            return trimSentence(wrappedError)
+        }
+
+        if isKnownLabeledError(errorDescription) {
+            return trimSentence(errorDescription)
         }
 
         let quotedParts = errorDescription.split(separator: "\"", omittingEmptySubsequences: false)
@@ -37,13 +41,17 @@ public enum UploadFeedbackFormatter {
         return String(trimmed[..<end]) + "..."
     }
 
-    private static func parseUploadError(from errorDescription: String) -> String? {
+    private static func parseWrappedError(from errorDescription: String) -> String? {
         let patterns = [
             "remoteDirectoryFailed(",
             "noAvailableRemoteName(",
             "remoteExistenceCheckFailed(",
             "rsyncFailed(",
-            "clipboardFailed("
+            "clipboardFailed(",
+            "remoteInspectionFailed(",
+            "unsupportedRemotePath(",
+            "destinationReservationFailed(",
+            "tarFailed("
         ]
 
         guard let pattern = patterns.first(where: errorDescription.hasPrefix) else {
@@ -55,17 +63,26 @@ public enum UploadFeedbackFormatter {
         }
 
         let contentStart = errorDescription.index(errorDescription.startIndex, offsetBy: pattern.count)
-        let contentEnd = errorDescription.index(errorDescription.endIndex, offsetBy: -2)
+        let contentEnd = errorDescription.index(before: errorDescription.endIndex)
         guard contentStart <= contentEnd else {
             return nil
         }
 
         let wrapped = String(errorDescription[contentStart..<contentEnd])
-        guard wrapped.first == "\"" else {
+        guard wrapped.first == "\"", wrapped.last == "\"" else {
             return nil
         }
 
-        let quotedPayload = String(wrapped.dropFirst())
-        return quotedPayload.replacingOccurrences(of: #"\""#, with: #"""#)
+        let quotedPayload = String(wrapped.dropFirst().dropLast())
+        return quotedPayload
+            .replacingOccurrences(of: #"\""#, with: #"""#)
+            .replacingOccurrences(of: #"\\n"#, with: "\n")
+    }
+
+    private static func isKnownLabeledError(_ errorDescription: String) -> Bool {
+        let patterns = [
+            "hostHintMismatch("
+        ]
+        return patterns.contains { errorDescription.hasPrefix($0) }
     }
 }

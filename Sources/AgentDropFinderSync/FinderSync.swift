@@ -49,6 +49,13 @@ final class FinderSync: FIFinderSync {
             }
         }
 
+        if !submenu.items.isEmpty {
+            submenu.addItem(.separator())
+        }
+        let pullItem = NSMenuItem(title: "Pull from...", action: #selector(openPullWindow(_:)), keyEquivalent: "")
+        pullItem.target = self
+        submenu.addItem(pullItem)
+
         root.submenu = submenu
         menu.addItem(root)
         return menu
@@ -66,6 +73,12 @@ final class FinderSync: FIFinderSync {
         Self.recordDiagnostic("send requested target=\(connectName) selected=\(urls.map(\.path).joined(separator: ", "))")
 
         DispatchQueue.global(qos: .userInitiated).async {
+            if let feedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .finderUpload) {
+                Self.recordDiagnostic("send rejected target=\(connectName) reason=missing dependencies tools=\(feedback.missingToolNames.joined(separator: ","))")
+                Self.notify(title: "Agent Drop needs setup", body: feedback.message)
+                return
+            }
+
             let selection = FileSelection.validate(urls)
             if let failureMessage = Self.selectionFailureMessage(urls: urls, selection: selection) {
                 Self.recordDiagnostic("send rejected target=\(connectName) reason=\(failureMessage)")
@@ -99,6 +112,18 @@ final class FinderSync: FIFinderSync {
                 Self.markFiles(selection.files, badgeIdentifier: failureBadgeIdentifier)
                 Self.notify(title: "Agent Drop failed", body: UploadFeedbackFormatter.failure(targetName: target.name, errorDescription: String(describing: error)))
             }
+        }
+    }
+
+    @objc private func openPullWindow(_ sender: NSMenuItem) {
+        let url = AgentDropRoute.pullURL
+        Self.recordDiagnostic("pull route requested url=\(url.absoluteString)")
+        if NSWorkspace.shared.open(url) {
+            Self.recordDiagnostic("pull route opened")
+        } else {
+            let message = "Could not open Agent Drop."
+            Self.recordDiagnostic("pull route failed")
+            Self.notify(title: "Agent Drop failed", body: message)
         }
     }
 
@@ -154,7 +179,8 @@ final class FinderSync: FIFinderSync {
     }
 
     private static func menuIcon() -> NSImage {
-        let image = NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Agent Drop")
+        let image = NSImage(named: "AgentDropMenuIcon")
+            ?? NSImage(systemSymbolName: "tray.and.arrow.up", accessibilityDescription: "Agent Drop")
             ?? Self.textIcon("⇧")
         image.isTemplate = true
         image.size = NSSize(width: 16, height: 16)

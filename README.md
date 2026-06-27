@@ -8,7 +8,7 @@ When the remote agent needs a local screenshot, PDF, spec, fixture, or folder fr
 
 ![Agent Drop workflow](docs/assets/agent-drop-workflow.png)
 
-The first version is designed around that one fast workflow:
+The first workflow sends local files and folders to a remote inbox:
 
 ```text
 Right-click selected file(s) or folder(s)
@@ -28,15 +28,17 @@ After a target is selected, Agent Drop uploads the selected files and folders to
 
 You can then paste those paths into the SSH terminal where Codex, Claude Code, or another coding agent is already running.
 
-## Screenshots
+Agent Drop can also pull known remote files or folders back to the Mac. Use
+`Agent Drop -> Pull from...` or the CLI, paste paths such as
+`~/runs/output.png`, `/tmp/build-artifacts`, or `devbox:~/runs/output.png`,
+and downloaded items land in `~/Downloads/Agent Drop/`. On success, the final
+local paths are copied to the Mac clipboard.
 
-Finder right-click menu:
+## Screenshot
 
-![Agent Drop Finder context menu](docs/assets/agent-drop-finder-menu.png)
+Finder upload and pull workflow:
 
-Recent uploads window:
-
-![Agent Drop recent uploads window](docs/assets/agent-drop-app.png)
+![Agent Drop Finder upload and pull workflow](docs/assets/agent-drop-workflow.png)
 
 ## V1 Goals
 
@@ -47,25 +49,45 @@ Recent uploads window:
 - Upload through standard `ssh` and `rsync`.
 - Store uploaded files and folders under the remote inbox root `~/.agent-inbox`.
 - Group uploaded paths by date: `~/.agent-inbox/YYYY-MM-DD/`.
-- Avoid overwrites by renaming conflicts, for example `demo-2.png`.
+- Pull remote files and folders back into `~/Downloads/Agent Drop/`.
+- Avoid overwrites by renaming conflicts, for example `demo-2.png` or
+  `build-artifacts-2`.
 - Copy final remote paths, including filenames or folder names, to the Mac clipboard.
+- Copy final local paths after successful pulls.
+- Check required local tools before Finder uploads and app pulls, then show
+  setup feedback without installing dependencies automatically.
 
 ## CLI Usage
 
-Agent Drop includes a CLI for checking dependencies, listing SSH targets, and sending files or folders to an explicit target:
+Agent Drop includes a CLI for checking dependencies, listing SSH targets,
+sending files or folders, and pulling remote paths back to the Mac:
 
 ```bash
 agent-drop targets
 agent-drop doctor
 agent-drop send --target <target> <paths...>
+agent-drop pull --target <target> <remote-paths...>
 ```
 
-The CLI does not implement an interactive target picker.
+Examples:
+
+```bash
+agent-drop send --target devbox ./demo.png ./project-folder
+agent-drop pull --target devbox ~/runs/output.png /tmp/build-artifacts
+agent-drop pull --target devbox devbox:~/runs/output.png
+```
+
+The CLI does not implement an interactive target picker. If exactly one SSH
+target is discovered, `send` and `pull` can use it when `--target` is omitted.
+
+`doctor`, Finder uploads, and app pulls check required local tools such as
+`ssh`, `rsync`, `tar`, and `pbcopy`. Agent Drop reports missing tools clearly,
+but it never installs dependencies automatically.
 
 ## Not In V1
 
 - No prompt generation.
-- No bidirectional sync.
+- No continuous bidirectional sync.
 - No remote project directory integration.
 - No clipboard image or clipboard text upload.
 - No Raycast, Alfred, iOS sharing, or menu bar workflow.
@@ -75,6 +97,10 @@ The CLI does not implement an interactive target picker.
 The current V1 design is documented in:
 
 [docs/superpowers/specs/2026-06-15-agent-drop-design.md](docs/superpowers/specs/2026-06-15-agent-drop-design.md)
+
+The pull workflow design is documented in:
+
+[docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md](docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md)
 
 ## Development
 
@@ -135,33 +161,41 @@ Run the CLI during development:
 swift run agent-drop doctor
 swift run agent-drop targets
 swift run agent-drop send --target devbox ./demo.png ./project-folder
+swift run agent-drop pull --target devbox ~/runs/output.png
 ```
 
 Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
 
 Regular files and directories are supported. Directory uploads preserve the
 selected directory contents under a remote directory with the same display name.
+Pulls place files and directories under `~/Downloads/Agent Drop/`, preserving
+directory contents and choosing a suffixed name if the local destination exists.
 
 ## Finder Extension Notes
 
-- The Finder menu is `Agent Drop -> <SSH target>`.
+- The Finder menu is `Agent Drop -> <SSH target>` for uploads.
+- `Agent Drop -> Pull from...` opens the app's pull tab through
+  `agentdrop://pull`.
 - The root menu item includes a small template upload icon.
 - On upload success or failure, Finder badges the selected file briefly.
 - The extension writes diagnostics to
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`.
 - macOS notification delivery from Finder Sync is best-effort. The app's
-  `Recent Uploads` view is the reliable feedback and history surface.
+  `Recent Transfers` view is the reliable feedback and history surface.
 
-## Upload History
+## Transfer History
 
-Agent Drop records recent Finder uploads in the Finder extension container:
+Agent Drop records recent uploads and downloads in the Finder extension
+container:
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-The app reads that file to show `Recent Uploads`. Selecting a successful entry
-shows remote paths that can be copied again. Failed rows include a short error.
+The app reads that file to show `Recent Transfers`. Selecting a successful
+upload copies remote paths again; selecting a successful download copies local
+paths again. Failed rows include a short error and do not have a copy payload.
 The bottom status bar shows the refresh status dot, the last history refresh
-time, and the app version/build.
+time, and the app version/build. The JSON file name is kept for compatibility
+even though it now stores both transfer directions.
 
 For this developer build path, the containing app is intentionally
 unsandboxed so it can read the Finder extension history file without requiring
@@ -172,6 +206,7 @@ Manual Finder smoke test:
 
 ```bash
 TEST_FILE="$HOME/Downloads/agent-drop-ui-test.png"
+printf 'Agent Drop Finder smoke test\n' > "$TEST_FILE"
 printf 'AGENT_DROP_PENDING' | pbcopy
 open -R "$TEST_FILE"
 ```
@@ -195,13 +230,43 @@ After a Finder upload, verify history was written:
     test -f "$HISTORY"
     python3 -m json.tool "$HISTORY" | sed -n '1,80p'
 
-Open `Agent Drop.app` and confirm the upload appears in `Recent Uploads`.
+Open `Agent Drop.app` and confirm the upload appears in `Recent Transfers`.
 Select the upload, reset the clipboard, click `Copy Paths`, and verify
 `pbpaste` no longer shows the placeholder but the remote path:
 
     printf 'APP_COPY_PENDING' | pbcopy
     pbpaste
 
+Manual pull smoke test with `x570`:
+
+```bash
+TEST_FILE="$TMPDIR/agent-drop-e2e-$(date -u +%Y%m%dT%H%M%SZ).txt"
+printf 'Agent Drop x570 pull smoke test\n' > "$TEST_FILE"
+REMOTE_PATH="$(swift run agent-drop send --target x570 "$TEST_FILE" | tail -n 1)"
+LOCAL_PATH="$(swift run agent-drop pull --target x570 "$REMOTE_PATH" | tail -n 1)"
+test -f "$LOCAL_PATH"
+cmp "$TEST_FILE" "$LOCAL_PATH"
+test "$(pbpaste)" = "$LOCAL_PATH"
+```
+
+For a directory round trip, send and pull a small folder and compare its files:
+
+```bash
+TEST_DIR="$TMPDIR/agent-drop-e2e-dir-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$TEST_DIR/nested"
+printf 'root\n' > "$TEST_DIR/root.txt"
+printf 'nested\n' > "$TEST_DIR/nested/child.txt"
+REMOTE_DIR="$(swift run agent-drop send --target x570 "$TEST_DIR" | tail -n 1)"
+LOCAL_DIR="$(swift run agent-drop pull --target x570 "$REMOTE_DIR" | tail -n 1)"
+cmp "$TEST_DIR/root.txt" "$LOCAL_DIR/root.txt"
+cmp "$TEST_DIR/nested/child.txt" "$LOCAL_DIR/nested/child.txt"
+```
+
+Repeat the pull command with the same remote path to confirm local conflicts use
+the `-2` suffix. To test the App route, copy `x570:$REMOTE_PATH`, choose
+`Agent Drop -> Pull from...` in Finder, and confirm the pull tab preselects
+`x570` and preloads the remote path.
+
 ## Status
 
-Agent Drop V1 is implemented. The repository includes the Swift package/core, CLI, macOS app, Finder Sync extension, core tests, XcodeGen project configuration, and documented local test/build workflow.
+Agent Drop V1 is implemented. The repository includes the Swift package/core, CLI, macOS app, Finder Sync extension, upload and pull workflows, core tests, XcodeGen project configuration, and documented local test/build workflow.

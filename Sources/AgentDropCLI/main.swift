@@ -42,10 +42,28 @@ do {
         for file in uploaded {
             print(file.remoteDisplayPath)
         }
+
+    case let .pull(targetName, paths):
+        let targets = discoverTargets(runner: runner)
+        guard let target = resolveTarget(named: targetName, from: targets) else {
+            fputs("No SSH target selected or found.\n", stderr)
+            exit(2)
+        }
+
+        let remotePaths = try parseRemotePathArguments(paths)
+        let downloaded = try DownloadService(runner: runner).download(remotePaths: remotePaths, target: target)
+        for file in downloaded {
+            print(file.localDisplayPath)
+        }
     }
 } catch {
-    fputs("agent-drop: \(error)\n", stderr)
+    fputs("agent-drop: \(CLIErrorFormatter.message(for: error))\n", stderr)
     exit(1)
+}
+
+private func parseRemotePathArguments(_ arguments: [String]) throws -> [RemotePath] {
+    let normalizer = CLIRemotePathArgumentNormalizer()
+    return try arguments.flatMap { try RemotePathParser.parse(normalizer.normalize($0)) }
 }
 
 private func discoverTargets(runner: CommandRunning) -> [SSHTarget] {
