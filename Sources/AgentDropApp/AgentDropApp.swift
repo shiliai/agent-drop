@@ -17,95 +17,445 @@ struct AgentDropApp: App {
 }
 
 private struct TransferWindowView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @Binding var selectedRoute: AgentDropRoute?
 
-    @State private var selectedTab = TransferTab.history
+    @State private var navigation = TransferNavigationState()
     @State private var historyRefreshToken = UUID()
+    @State private var historyWatcher: UploadHistoryFileWatcher?
+    @State private var isAutoRefreshEnabled = false
+    @State private var lastUpdatedAt: Date?
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            UploadHistoryView(refreshToken: historyRefreshToken)
-                .tabItem {
-                    Label("History", systemImage: "clock")
-                }
-                .tag(TransferTab.history)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                appNavigation
 
-            PullFormView {
-                historyRefreshToken = UUID()
+                Divider()
+
+                Group {
+                    switch navigation.selectedSection {
+                    case .transfer:
+                        TransferWorkspaceView(
+                            navigation: $navigation,
+                            onHistoryRecorded: refreshHistory
+                        )
+                    case .history:
+                        UploadHistoryView(refreshToken: historyRefreshToken)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .tabItem {
-                Label("Pull from...", systemImage: "arrow.down.circle")
-            }
-            .tag(TransferTab.pull)
+
+            Divider()
+
+            UploadHistoryStatusBar(
+                isAutoRefreshEnabled: isAutoRefreshEnabled,
+                lastUpdatedAt: lastUpdatedAt,
+                versionDisplay: AgentDropVersion.display
+            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
         }
-        .frame(minWidth: 820, minHeight: 500)
+        .frame(minWidth: 920, minHeight: 560)
         .onChange(of: selectedRoute) { _, route in
             apply(route)
         }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                refreshHistory()
+                startHistoryWatcher()
+            } else if phase == .background {
+                stopHistoryWatcher()
+            }
+        }
         .onAppear {
+            refreshHistory()
+            startHistoryWatcher()
             apply(selectedRoute)
         }
+        .onDisappear {
+            stopHistoryWatcher()
+        }
+    }
+
+    private var appNavigation: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            AppNavigationButton(
+                title: "Transfer",
+                systemImage: "arrow.left.arrow.right",
+                isSelected: navigation.selectedSection == .transfer
+            ) {
+                navigation.selectedSection = .transfer
+            }
+
+            AppNavigationButton(
+                title: "History",
+                systemImage: "clock",
+                isSelected: navigation.selectedSection == .history
+            ) {
+                navigation.selectedSection = .history
+            }
+
+            Spacer()
+        }
+        .padding(10)
+        .frame(width: 150)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func apply(_ route: AgentDropRoute?) {
-        switch route {
-        case .pull:
-            selectedTab = .pull
-            selectedRoute = nil
-        case nil:
-            break
+        guard route != nil else { return }
+        navigation.apply(route)
+        selectedRoute = nil
+    }
+
+    private func refreshHistory() {
+        historyRefreshToken = UUID()
+        lastUpdatedAt = Date()
+    }
+
+    private func startHistoryWatcher() {
+        guard historyWatcher == nil else { return }
+        let watcher = UploadHistoryFileWatcher {
+            Task { @MainActor in
+                refreshHistory()
+            }
         }
+        historyWatcher = watcher
+        isAutoRefreshEnabled = watcher.start()
+    }
+
+    private func stopHistoryWatcher() {
+        historyWatcher?.stop()
+        historyWatcher = nil
+        isAutoRefreshEnabled = false
     }
 }
 
-private enum TransferTab {
-    case history
-    case pull
+private struct AppNavigationButton: View {
+    let title: String
+    let systemImage: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(Color.accentColor.opacity(0.16))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? .primary : .secondary)
+        .fontWeight(isSelected ? .semibold : .regular)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
 }
 
-private struct PullFormView: View {
+private struct TransferWorkspaceView: View {
+    @Binding var navigation: TransferNavigationState
     let onHistoryRecorded: () -> Void
 
     @State private var targets: [SSHTarget] = []
-    @State private var selectedTargetID: SSHTarget.ID?
     @State private var remotePathText = ""
-    @State private var status = PullStatus.idle
-    @State private var dependencyFeedback: DependencyFeedback?
-    @State private var isDownloading = false
+    @State private var doctorReport = Doctor().run()
     @State private var didInitialLoad = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HostListView(
+                targets: targets,
+                selectedTargetID: $navigation.selectedTargetID,
+                onRefresh: {
+                    loadTargets(applyClipboardPrefill: false)
+                }
+            )
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .center) {
+                    Text("Transfer")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+
+                    Spacer()
+
+                    Picker("Transfer Mode", selection: $navigation.transferMode) {
+                        Text("Drop").tag(TransferMode.drop)
+                        Text("Pull from...").tag(TransferMode.pull)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 220)
+                }
+
+                switch navigation.transferMode {
+                case .drop:
+                    DropLandingView(
+                        selectedTarget: selectedTarget,
+                        dependencyFeedback: dependencyFeedback(for: .finderUpload),
+                        onSwitchToPull: {
+                            navigation.transferMode = .pull
+                        }
+                    )
+                case .pull:
+                    PullFormView(
+                        targets: targets,
+                        selectedTargetID: $navigation.selectedTargetID,
+                        remotePathText: $remotePathText,
+                        dependencyFeedback: dependencyFeedback(for: .appPull),
+                        dependencyFeedbackProvider: DependencyFeedbackProvider(),
+                        onHistoryRecorded: onHistoryRecorded
+                    )
+                }
+            }
+            .padding(24)
+            .background(Color(nsColor: .textBackgroundColor))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .onAppear {
+            guard !didInitialLoad else { return }
+            didInitialLoad = true
+            loadTargets(applyClipboardPrefill: true)
+        }
+        .onChange(of: navigation.transferMode) { _, mode in
+            if mode == .pull, remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prefillFromClipboard(targets: targets)
+            }
+        }
+    }
+
+    private var selectedTarget: SSHTarget? {
+        guard let selectedTargetID = navigation.selectedTargetID else { return nil }
+        return targets.first { $0.id == selectedTargetID }
+    }
+
+    private func loadTargets(applyClipboardPrefill: Bool) {
+        doctorReport = Doctor().run()
+        let discoveredTargets = discoverTargets()
+        targets = discoveredTargets
+        navigation.reconcileTargets(discoveredTargets)
+
+        if applyClipboardPrefill {
+            prefillFromClipboard(targets: discoveredTargets)
+        }
+    }
+
+    private func prefillFromClipboard(targets: [SSHTarget]) {
+        let clipboardText = NSPasteboard.general.string(forType: .string)
+        guard let prefill = PullFormPrefill.evaluate(clipboardText: clipboardText, targets: targets) else {
+            return
+        }
+
+        remotePathText = prefill.pathText
+        if let selectedTargetID = prefill.selectedTargetID {
+            navigation.selectedTargetID = selectedTargetID
+        }
+    }
+
+    private func dependencyFeedback(for requirement: DependencyRequirement) -> DependencyFeedback? {
+        DependencyFeedback.missingFeedback(in: doctorReport, for: requirement)
+    }
+
+    private func discoverTargets() -> [SSHTarget] {
+        let runner = ProcessCommandRunner()
+        let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
+        let configured = SSHConfigParser().parse(configText)
+
+        let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
+        let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
+
+        return TargetResolver.merge(active: active, configured: configured)
+    }
+}
+
+private struct HostListView: View {
+    let targets: [SSHTarget]
+    @Binding var selectedTargetID: SSHTarget.ID?
+    let onRefresh: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Hosts")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+
+                Spacer()
+
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh targets")
+                .accessibilityLabel("Refresh targets")
+            }
+
+            if targets.isEmpty {
+                ContentUnavailableView(
+                    "No Hosts",
+                    systemImage: "network",
+                    description: Text("Add SSH hosts or open an SSH session.")
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $selectedTargetID) {
+                    ForEach(targets) { target in
+                        HostRow(target: target)
+                            .tag(SSHTarget.ID?.some(target.id))
+                    }
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .padding(12)
+        .frame(width: 230)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct HostRow: View {
+    let target: SSHTarget
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(target.name)
+                .fontWeight(.medium)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+        .help(targetLabel(for: target))
+    }
+
+    private var subtitle: String {
+        if target.name == target.connectName {
+            return target.source.rawValue
+        }
+        return "\(target.connectName) - \(target.source.rawValue)"
+    }
+}
+
+private struct DropLandingView: View {
+    let selectedTarget: SSHTarget?
+    let dependencyFeedback: DependencyFeedback?
+    let onSwitchToPull: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
+                Text(description)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let dependencyFeedback {
+                Label(dependencyFeedback.message, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .textSelection(.enabled)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Finder workflow")
+                    .font(.headline)
+                Text("Select files or folders in Finder, right-click, choose Agent Drop, then pick the selected host.")
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory()))
+                } label: {
+                    Label("Open Finder", systemImage: "folder")
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button(action: onSwitchToPull) {
+                    Label("Pull instead", systemImage: "arrow.down.circle")
+                }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: 620, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var title: String {
+        guard let selectedTarget else {
+            return "Drop to SSH"
+        }
+        return "Drop to \(selectedTarget.name)"
+    }
+
+    private var description: String {
+        guard let selectedTarget else {
+            return "Choose a host, then use Finder to send selected files or folders."
+        }
+        return "Use Finder to send selected files or folders to \(selectedTarget.name)."
+    }
+}
+
+private struct PullFormView: View {
+    let targets: [SSHTarget]
+    @Binding var selectedTargetID: SSHTarget.ID?
+    @Binding var remotePathText: String
+    let dependencyFeedback: DependencyFeedback?
+    let dependencyFeedbackProvider: DependencyFeedbackProvider
+    let onHistoryRecorded: () -> Void
+
+    @State private var status = PullStatus.idle
+    @State private var isDownloading = false
     @State private var activePullOperationID: UUID?
 
     private let historyStore = AsyncUploadHistoryStore()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .firstTextBaseline) {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text("Pull from SSH")
-                    .font(.title2)
+                    .font(.title3)
                     .fontWeight(.semibold)
 
-                Spacer()
-
-                Button {
-                    loadTargets(applyClipboardPrefill: false)
-                } label: {
-                    Label("Refresh Targets", systemImage: "arrow.clockwise")
-                }
-                .disabled(isDownloading)
+                Text(selectedTargetDescription)
+                    .foregroundStyle(.secondary)
             }
 
-            Form {
-                Picker("SSH Target", selection: $selectedTargetID) {
-                    Text("Select a target").tag(SSHTarget.ID?.none)
-                    ForEach(targets) { target in
-                        Text(targetLabel(for: target)).tag(SSHTarget.ID?.some(target.id))
-                    }
-                }
-                .disabled(isDownloading)
-
+            VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Remote Paths")
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("Remote Paths")
                         .font(.headline)
+
+                        Text(hostPrefixHint)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+
                     TextEditor(text: $remotePathText)
                         .font(.system(.body, design: .monospaced))
                         .frame(minHeight: 120)
@@ -119,41 +469,57 @@ private struct PullFormView: View {
                         .disabled(isDownloading)
                 }
 
-                LabeledContent("Destination") {
+                Divider()
+
+                HStack(alignment: .center) {
+                    Text("Destination")
+                        .font(.headline)
+
+                    Spacer()
+
                     Text("~/Downloads/Agent Drop/")
                         .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    Button {
+                        startDownload()
+                    } label: {
+                        if isDownloading {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Download", systemImage: "arrow.down.circle")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .frame(minWidth: 170)
+                    .disabled(isDownloading)
+
+                    Text("Copies downloaded local paths to the clipboard.")
+                        .foregroundStyle(.secondary)
+
+                    Spacer()
+                }
             }
-            .formStyle(.grouped)
+            .padding(20)
+            .frame(maxWidth: 640, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color(nsColor: .separatorColor).opacity(0.55))
+            }
 
             statusView
             dependencyStatusView
-
-            HStack {
-                Spacer()
-                Button {
-                    startDownload()
-                } label: {
-                    if isDownloading {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Label("Download", systemImage: "arrow.down.circle")
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .frame(minWidth: 120)
-                .disabled(isDownloading || dependencyFeedback != nil)
-            }
         }
-        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
-            guard !didInitialLoad else { return }
-            didInitialLoad = true
-            loadTargets(applyClipboardPrefill: true)
-        }
     }
 
     @ViewBuilder
@@ -201,30 +567,18 @@ private struct PullFormView: View {
         return targets.first { $0.id == selectedTargetID }
     }
 
-    private func loadTargets(applyClipboardPrefill: Bool) {
-        dependencyFeedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .appPull)
-        let discoveredTargets = discoverTargets()
-        targets = discoveredTargets
-
-        if let selectedTargetID, !discoveredTargets.contains(where: { $0.id == selectedTargetID }) {
-            self.selectedTargetID = nil
+    private var selectedTargetDescription: String {
+        guard let selectedTarget else {
+            return "Choose a host from the Hosts list before downloading."
         }
-
-        if applyClipboardPrefill {
-            prefillFromClipboard(targets: discoveredTargets)
-        }
+        return "Remote paths will be downloaded from \(targetLabel(for: selectedTarget))."
     }
 
-    private func prefillFromClipboard(targets: [SSHTarget]) {
-        let clipboardText = NSPasteboard.general.string(forType: .string)
-        guard let prefill = PullFormPrefill.evaluate(clipboardText: clipboardText, targets: targets) else {
-            return
+    private var hostPrefixHint: String {
+        guard let selectedTarget else {
+            return "host:~/path"
         }
-
-        remotePathText = prefill.pathText
-        if let selectedTargetID = prefill.selectedTargetID {
-            self.selectedTargetID = selectedTargetID
-        }
+        return "\(selectedTarget.connectName):~/path"
     }
 
     private func startDownload() {
@@ -233,9 +587,9 @@ private struct PullFormView: View {
         activePullOperationID = operationID
         status = .idle
 
-        dependencyFeedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .appPull)
-        if let dependencyFeedback {
-            status = .failure(dependencyFeedback.message)
+        let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appPull)
+        if let currentDependencyFeedback {
+            status = .failure(currentDependencyFeedback.message)
             return
         }
 
@@ -366,24 +720,6 @@ private struct PullFormView: View {
         }
     }
 
-    private func discoverTargets() -> [SSHTarget] {
-        let runner = ProcessCommandRunner()
-        let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
-        let configured = SSHConfigParser().parse(configText)
-
-        let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
-        let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
-
-        return TargetResolver.merge(active: active, configured: configured)
-    }
-
-    private func targetLabel(for target: SSHTarget) -> String {
-        if target.name == target.connectName {
-            return "\(target.name) (\(target.source.rawValue))"
-        }
-        return "\(target.name) -> \(target.connectName) (\(target.source.rawValue))"
-    }
-
     private func normalizedInputLines(from text: String) -> [String] {
         text
             .split(separator: "\n", omittingEmptySubsequences: false)
@@ -400,16 +736,12 @@ private enum PullStatus: Equatable {
 }
 
 private struct UploadHistoryView: View {
-    @Environment(\.scenePhase) private var scenePhase
     let refreshToken: UUID
 
     @State private var entries: [UploadHistoryEntry] = []
     @State private var selectedID: UploadHistoryEntry.ID?
     @State private var loadErrorMessage: String?
     @State private var statusMessage: String?
-    @State private var historyWatcher: UploadHistoryFileWatcher?
-    @State private var isAutoRefreshEnabled = false
-    @State private var lastUpdatedAt: Date?
     @State private var activeHistoryLoadID: UUID?
 
     private let store = AsyncUploadHistoryStore()
@@ -455,11 +787,6 @@ private struct UploadHistoryView: View {
                     .listStyle(.sidebar)
                 }
 
-                UploadHistoryStatusBar(
-                    isAutoRefreshEnabled: isAutoRefreshEnabled,
-                    lastUpdatedAt: lastUpdatedAt,
-                    versionDisplay: AgentDropVersion.display
-                )
             }
             .padding()
             .frame(minWidth: 300)
@@ -482,18 +809,6 @@ private struct UploadHistoryView: View {
         }
         .onAppear {
             loadHistory()
-            startHistoryWatcher()
-        }
-        .onDisappear {
-            stopHistoryWatcher()
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                loadHistory()
-                startHistoryWatcher()
-            } else if phase == .background {
-                stopHistoryWatcher()
-            }
         }
         .onChange(of: selectedID) { _, _ in
             statusMessage = nil
@@ -521,7 +836,6 @@ private struct UploadHistoryView: View {
                 switch result {
                 case let .success(loadedEntries):
                     entries = loadedEntries
-                    lastUpdatedAt = Date()
                     loadErrorMessage = nil
                     if selectedID == nil || !loadedEntries.contains(where: { $0.id == selectedID }) {
                         selectedID = loadedEntries.first?.id
@@ -535,23 +849,6 @@ private struct UploadHistoryView: View {
                 }
             }
         }
-    }
-
-    private func startHistoryWatcher() {
-        guard historyWatcher == nil else { return }
-        let watcher = UploadHistoryFileWatcher {
-            Task { @MainActor in
-                loadHistory()
-            }
-        }
-        historyWatcher = watcher
-        isAutoRefreshEnabled = watcher.start()
-    }
-
-    private func stopHistoryWatcher() {
-        historyWatcher?.stop()
-        historyWatcher = nil
-        isAutoRefreshEnabled = false
     }
 }
 
@@ -591,6 +888,24 @@ private struct UploadHistoryStatusBar: View {
 
         return "Last updated: \(lastUpdatedAt.formatted(date: .omitted, time: .standard))"
     }
+}
+
+private func discoverTargets() -> [SSHTarget] {
+    let runner = ProcessCommandRunner()
+    let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
+    let configured = SSHConfigParser().parse(configText)
+
+    let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
+    let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
+
+    return TargetResolver.merge(active: active, configured: configured)
+}
+
+private func targetLabel(for target: SSHTarget) -> String {
+    if target.name == target.connectName {
+        return "\(target.name) (\(target.source.rawValue))"
+    }
+    return "\(target.name) -> \(target.connectName) (\(target.source.rawValue))"
 }
 
 private struct UploadHistoryRow: View {

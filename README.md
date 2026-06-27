@@ -34,7 +34,11 @@ Agent Drop can also pull known remote files or folders back to the Mac. Use
 and downloaded items land in `~/Downloads/Agent Drop/`. On success, the final
 local paths are copied to the Mac clipboard.
 
-## Screenshot
+## Screenshots
+
+Transfer window with shared Hosts, Drop/Pull modes, and the global status bar:
+
+![Agent Drop transfer window](docs/assets/agent-drop-app.png)
 
 Finder upload and pull workflow:
 
@@ -101,6 +105,10 @@ The current V1 design is documented in:
 The pull workflow design is documented in:
 
 [docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md](docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md)
+
+The transfer navigation design is documented in:
+
+[docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md](docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md)
 
 ## Development
 
@@ -174,14 +182,14 @@ directory contents and choosing a suffixed name if the local destination exists.
 ## Finder Extension Notes
 
 - The Finder menu is `Agent Drop -> <SSH target>` for uploads.
-- `Agent Drop -> Pull from...` opens the app's pull tab through
-  `agentdrop://pull`.
+- `Agent Drop -> Pull from...` opens the app's `Transfer` section in Pull mode
+  through `agentdrop://pull`.
 - The root menu item includes a small template upload icon.
 - On upload success or failure, Finder badges the selected file briefly.
 - The extension writes diagnostics to
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`.
 - macOS notification delivery from Finder Sync is best-effort. The app's
-  `Recent Transfers` view is the reliable feedback and history surface.
+  `History` section is the reliable feedback and history surface.
 
 ## Transfer History
 
@@ -190,7 +198,7 @@ container:
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-The app reads that file to show `Recent Transfers`. Selecting a successful
+The app reads that file to show `History`. Selecting a successful
 upload copies remote paths again; selecting a successful download copies local
 paths again. Failed rows include a short error and do not have a copy payload.
 The bottom status bar shows the refresh status dot, the last history refresh
@@ -230,7 +238,7 @@ After a Finder upload, verify history was written:
     test -f "$HISTORY"
     python3 -m json.tool "$HISTORY" | sed -n '1,80p'
 
-Open `Agent Drop.app` and confirm the upload appears in `Recent Transfers`.
+Open `Agent Drop.app` and confirm the upload appears in `History`.
 Select the upload, reset the clipboard, click `Copy Paths`, and verify
 `pbpaste` no longer shows the placeholder but the remote path:
 
@@ -264,8 +272,8 @@ cmp "$TEST_DIR/nested/child.txt" "$LOCAL_DIR/nested/child.txt"
 
 Repeat the pull command with the same remote path to confirm local conflicts use
 the `-2` suffix. To test the App route, copy `x570:$REMOTE_PATH`, choose
-`Agent Drop -> Pull from...` in Finder, and confirm the pull tab preselects
-`x570` and preloads the remote path.
+`Agent Drop -> Pull from...` in Finder, and confirm the `Transfer` section opens
+in Pull mode, preselects `x570`, and preloads the host-prefixed remote path.
 
 ## Status
 

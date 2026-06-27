@@ -11,7 +11,7 @@ final class PullFormPrefillTests: XCTestCase {
         XCTAssertEqual(result, PullFormPrefill.Result(selectedTargetID: nil, pathText: "~/runs/output.png"))
     }
 
-    func testSelectsTargetAndStripsHostHintForMatchingTargetName() {
+    func testSelectsTargetAndPreservesHostHintForMatchingTargetName() {
         let target = SSHTarget(name: "devbox", source: .config)
 
         let result = PullFormPrefill.evaluate(
@@ -19,10 +19,10 @@ final class PullFormPrefillTests: XCTestCase {
             targets: [target]
         )
 
-        XCTAssertEqual(result, PullFormPrefill.Result(selectedTargetID: target.id, pathText: "~/runs/output.png"))
+        XCTAssertEqual(result, PullFormPrefill.Result(selectedTargetID: target.id, pathText: "devbox:~/runs/output.png"))
     }
 
-    func testSelectsTargetAndStripsHostHintForMatchingConnectName() {
+    func testSelectsTargetAndPreservesHostHintForMatchingConnectName() {
         let target = SSHTarget(name: "GPU Box", connectName: "gpu-box.internal", source: .config)
 
         let result = PullFormPrefill.evaluate(
@@ -30,10 +30,10 @@ final class PullFormPrefillTests: XCTestCase {
             targets: [target]
         )
 
-        XCTAssertEqual(result, PullFormPrefill.Result(selectedTargetID: target.id, pathText: "/tmp/result.zip"))
+        XCTAssertEqual(result, PullFormPrefill.Result(selectedTargetID: target.id, pathText: "gpu-box.internal:/tmp/result.zip"))
     }
 
-    func testStripsMultipleHostHintsWhenTheyAllMatchOneTarget() {
+    func testPreservesMultipleHostHintsWhenTheyAllMatchOneTarget() {
         let target = SSHTarget(name: "devbox", source: .config)
 
         let result = PullFormPrefill.evaluate(
@@ -48,7 +48,7 @@ final class PullFormPrefillTests: XCTestCase {
             result,
             PullFormPrefill.Result(
                 selectedTargetID: target.id,
-                pathText: "~/runs/output.png\n/tmp/build-artifacts"
+                pathText: "devbox:~/runs/output.png\ndevbox:/tmp/build-artifacts"
             )
         )
     }

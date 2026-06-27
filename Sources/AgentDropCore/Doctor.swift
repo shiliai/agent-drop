@@ -53,6 +53,18 @@ public struct DependencyFeedback: Equatable {
     }
 }
 
+public struct DependencyFeedbackProvider {
+    private let runReport: () -> DoctorReport
+
+    public init(runReport: @escaping () -> DoctorReport = { Doctor().run() }) {
+        self.runReport = runReport
+    }
+
+    public func feedback(for requirement: DependencyRequirement) -> DependencyFeedback? {
+        DependencyFeedback.missingFeedback(in: runReport(), for: requirement)
+    }
+}
+
 public struct Doctor {
     private let toolLookup: (String) -> String?
 
