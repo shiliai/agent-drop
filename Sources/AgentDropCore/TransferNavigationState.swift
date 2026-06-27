@@ -41,4 +41,8 @@ public struct TransferNavigationState: Equatable, Sendable {
             self.selectedTargetID = nil
         }
     }
+
+    public mutating func reconcileTargets(_ targets: [SSHTarget]) {
+        reconcileSelectedTarget(with: targets)
+    }
 }

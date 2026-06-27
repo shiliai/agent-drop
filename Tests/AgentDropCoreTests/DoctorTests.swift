@@ -62,4 +62,30 @@ final class DoctorTests: XCTestCase {
             "Missing required local tools: rsync, tar. Install them and try again. Agent Drop does not install dependencies automatically."
         )
     }
+
+    func testDependencyFeedbackProviderRerunsDoctorForEachRequest() {
+        var reports = [
+            DoctorReport(checks: [
+                DoctorCheck(name: "ssh", status: .ok),
+                DoctorCheck(name: "rsync", status: .missing),
+                DoctorCheck(name: "tar", status: .ok),
+                DoctorCheck(name: "pbcopy", status: .ok)
+            ]),
+            DoctorReport(checks: [
+                DoctorCheck(name: "ssh", status: .ok),
+                DoctorCheck(name: "rsync", status: .ok),
+                DoctorCheck(name: "tar", status: .ok),
+                DoctorCheck(name: "pbcopy", status: .ok)
+            ])
+        ]
+        var runCount = 0
+        let provider = DependencyFeedbackProvider {
+            runCount += 1
+            return reports.removeFirst()
+        }
+
+        XCTAssertEqual(provider.feedback(for: .appPull)?.missingToolNames, ["rsync"])
+        XCTAssertNil(provider.feedback(for: .appPull))
+        XCTAssertEqual(runCount, 2)
+    }
 }

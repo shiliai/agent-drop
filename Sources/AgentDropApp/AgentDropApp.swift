@@ -212,6 +212,7 @@ private struct TransferWorkspaceView: View {
                         selectedTargetID: $navigation.selectedTargetID,
                         remotePathText: $remotePathText,
                         dependencyFeedback: dependencyFeedback(for: .appPull),
+                        dependencyFeedbackProvider: DependencyFeedbackProvider(),
                         onHistoryRecorded: onHistoryRecorded
                     )
                 }
@@ -241,11 +242,7 @@ private struct TransferWorkspaceView: View {
         doctorReport = Doctor().run()
         let discoveredTargets = discoverTargets()
         targets = discoveredTargets
-        navigation.reconcileSelectedTarget(with: discoveredTargets)
-
-        if navigation.selectedTargetID == nil, let firstTarget = discoveredTargets.first {
-            navigation.selectedTargetID = firstTarget.id
-        }
+        navigation.reconcileTargets(discoveredTargets)
 
         if applyClipboardPrefill {
             prefillFromClipboard(targets: discoveredTargets)
@@ -427,6 +424,7 @@ private struct PullFormView: View {
     @Binding var selectedTargetID: SSHTarget.ID?
     @Binding var remotePathText: String
     let dependencyFeedback: DependencyFeedback?
+    let dependencyFeedbackProvider: DependencyFeedbackProvider
     let onHistoryRecorded: () -> Void
 
     @State private var status = PullStatus.idle
@@ -501,7 +499,7 @@ private struct PullFormView: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .frame(minWidth: 170)
-                    .disabled(isDownloading || dependencyFeedback != nil)
+                    .disabled(isDownloading)
 
                     Text("Copies downloaded local paths to the clipboard.")
                         .foregroundStyle(.secondary)
@@ -589,8 +587,9 @@ private struct PullFormView: View {
         activePullOperationID = operationID
         status = .idle
 
-        if let dependencyFeedback {
-            status = .failure(dependencyFeedback.message)
+        let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appPull)
+        if let currentDependencyFeedback {
+            status = .failure(currentDependencyFeedback.message)
             return
         }
 

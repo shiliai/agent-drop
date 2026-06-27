@@ -47,4 +47,16 @@ final class TransferNavigationStateTests: XCTestCase {
 
         XCTAssertNil(state.selectedTargetID)
     }
+
+    func testRefreshingTargetsDoesNotAutoSelectFirstTarget() {
+        var state = TransferNavigationState()
+        let targets = [
+            SSHTarget(name: "devbox", source: .config),
+            SSHTarget(name: "gpu-box", source: .config)
+        ]
+
+        state.reconcileTargets(targets)
+
+        XCTAssertNil(state.selectedTargetID)
+    }
 }
