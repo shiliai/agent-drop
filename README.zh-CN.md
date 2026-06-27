@@ -35,6 +35,10 @@ Agent Drop 也可以把已知的远程文件或文件夹拉回 Mac。使用
 
 ## 截图
 
+带共享 Hosts、Drop/Pull 模式和全局状态栏的 Transfer 窗口：
+
+![Agent Drop Transfer 窗口](docs/assets/agent-drop-app.png)
+
 Finder 上传和 pull 工作流：
 
 ![Agent Drop Finder 上传和 pull 工作流](docs/assets/agent-drop-workflow.png)
@@ -100,6 +104,10 @@ pull 工作流设计记录在：
 
 [docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md](docs/superpowers/specs/2026-06-26-agent-drop-pull-design.md)
 
+Transfer 导航设计记录在：
+
+[docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md](docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md)
+
 ## 开发
 
 运行核心测试：
@@ -164,12 +172,13 @@ Agent Drop 使用 UTC `YYYY-MM-DD` 作为上传日期目录。
 ## Finder 扩展说明
 
 - Finder 菜单里的 `Agent Drop -> <SSH target>` 用于上传。
-- `Agent Drop -> Pull from...` 会通过 `agentdrop://pull` 打开 App 的 pull tab。
+- `Agent Drop -> Pull from...` 会通过 `agentdrop://pull` 打开 App 的
+  `Transfer` 区域，并切到 Pull 模式。
 - 根菜单项带一个小的 template upload 图标。
 - 上传成功或失败后，Finder 会短暂给选中的文件加 badge。
 - 扩展诊断日志写入：
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`。
-- Finder Sync 发出的 macOS 通知是 best-effort。App 里的 `Recent Transfers` 才是可靠的反馈和历史记录界面。
+- Finder Sync 发出的 macOS 通知是 best-effort。App 里的 `History` 区域才是可靠的反馈和历史记录界面。
 
 ## 传输历史
 
@@ -177,7 +186,7 @@ Agent Drop 会把最近的上传和下载记录写到 Finder 扩展容器里：
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-App 会读取这个文件并显示 `Recent Transfers`。选择成功的上传记录后，可以再次复制远程路径；选择成功的下载记录后，可以再次复制本地路径。失败记录会显示短错误信息，且没有可复制 payload。窗口底部状态栏会显示刷新状态点、最后刷新时间，以及 App 版本号/build。JSON 文件名为了兼容旧版本仍保留为 `upload-history.json`，但现在会存储两个传输方向。
+App 会读取这个文件并显示 `History`。选择成功的上传记录后，可以再次复制远程路径；选择成功的下载记录后，可以再次复制本地路径。失败记录会显示短错误信息，且没有可复制 payload。窗口底部状态栏会显示刷新状态点、最后刷新时间，以及 App 版本号/build。JSON 文件名为了兼容旧版本仍保留为 `upload-history.json`，但现在会存储两个传输方向。
 
 当前 developer build 路径下，主 App 有意保持 unsandboxed，这样它可以读取 Finder 扩展的历史文件，而不需要 Apple Developer Program App Group。以后如果做签名和 notarized release，可以迁移到 App Group container。
 
@@ -206,7 +215,7 @@ Finder 上传后，确认历史文件已写入：
     test -f "$HISTORY"
     python3 -m json.tool "$HISTORY" | sed -n '1,80p'
 
-打开 `Agent Drop.app`，确认上传记录出现在 `Recent Transfers`。选择上传记录，重置剪贴板，点击 `Copy Paths`，再确认 `pbpaste` 不再是占位内容，而是远程路径：
+打开 `Agent Drop.app`，确认上传记录出现在 `History`。选择上传记录，重置剪贴板，点击 `Copy Paths`，再确认 `pbpaste` 不再是占位内容，而是远程路径：
 
     printf 'APP_COPY_PENDING' | pbcopy
     pbpaste
@@ -237,8 +246,8 @@ cmp "$TEST_DIR/nested/child.txt" "$LOCAL_DIR/nested/child.txt"
 ```
 
 重复执行同一个 pull 命令，可以确认本地重名时使用 `-2` 后缀。测试 App 路由时，复制
-`x570:$REMOTE_PATH`，在 Finder 里选择 `Agent Drop -> Pull from...`，确认 pull tab
-会预选 `x570` 并填入远程路径。
+`x570:$REMOTE_PATH`，在 Finder 里选择 `Agent Drop -> Pull from...`，确认 `Transfer`
+区域会切到 Pull 模式，预选 `x570`，并填入带 host 前缀的远程路径。
 
 ## 状态
 

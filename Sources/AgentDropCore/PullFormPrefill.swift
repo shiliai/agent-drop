@@ -25,7 +25,7 @@ public enum PullFormPrefill {
         if hintCount > 0, hintedTargets.count == 1, matchedTargetIDs.count == hintCount {
             return Result(
                 selectedTargetID: hintedTargets.first,
-                pathText: paths.map(\.path).joined(separator: "\n")
+                pathText: normalizedInput
             )
         }
 
