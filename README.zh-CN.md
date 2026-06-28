@@ -136,6 +136,20 @@ xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug b
 xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug build
 ```
 
+打包开发者 DMG，用于 release 测试：
+
+```bash
+scripts/package_developer_dmg.sh
+```
+
+生成的文件是 `dist/AgentDrop-developer.dmg`。双击打开 DMG，然后把
+`Agent Drop.app` 拖到 `Applications`。
+
+这是 developer build，不是 notarized 的正式公众发布版。首次打开时，macOS
+可能需要你在 Privacy & Security 里允许打开。Finder extension 仍然需要在
+System Settings > Login Items & Extensions > Extensions 里启用；如果右键菜单
+没有出现，启用后重启 Finder。
+
 安装本地签名 App：
 
 ```bash
