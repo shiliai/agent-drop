@@ -457,11 +457,28 @@ private struct DropLandingView: View {
 
     private var clipboardCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Label("Clipboard", systemImage: "doc.on.clipboard")
                     .font(.headline)
 
                 Spacer()
+
+                Button {
+                    startClipboardDrop()
+                } label: {
+                    if isDroppingClipboard {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Label("Drop Clipboard", systemImage: "paperplane")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!canDropClipboard)
+                .help(dropClipboardHelp)
+                .accessibilityLabel("Drop Clipboard")
 
                 Button {
                     refreshClipboard(preservingStatus: false)
@@ -481,22 +498,6 @@ private struct DropLandingView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 0)
-
-            Button {
-                startClipboardDrop()
-            } label: {
-                if isDroppingClipboard {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Label("Drop Clipboard", systemImage: "paperplane")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .frame(minWidth: 170)
-            .disabled(!canDropClipboard)
-            .help(dropClipboardHelp)
         }
         .padding(18)
         .frame(minWidth: 320, maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
