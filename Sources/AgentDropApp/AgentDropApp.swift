@@ -376,6 +376,26 @@ private struct DropLandingView: View {
     private let historyStore = AsyncUploadHistoryStore()
 
     var body: some View {
+        ScrollView {
+            content
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.trailing, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            refreshClipboard(preservingStatus: true)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                refreshClipboard(preservingStatus: true)
+            }
+        }
+        .onChange(of: selectedTarget?.id) { _, _ in
+            clearStatusWhenReady()
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
@@ -400,17 +420,6 @@ private struct DropLandingView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
-            refreshClipboard(preservingStatus: true)
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
-                refreshClipboard(preservingStatus: true)
-            }
-        }
-        .onChange(of: selectedTarget?.id) { _, _ in
-            clearStatusWhenReady()
-        }
     }
 
     private var finderWorkflowCard: some View {
