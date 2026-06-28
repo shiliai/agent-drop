@@ -535,10 +535,17 @@ private struct DropLandingView: View {
                 Text(message)
                     .foregroundStyle(.secondary)
             }
-        case let .success(paths):
+        case let .success(paths, copiedPaths, targetName):
             VStack(alignment: .leading, spacing: 8) {
-                Label("Uploaded and copied remote paths.", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                Label(
+                    UploadFeedbackFormatter.success(
+                        fileCount: paths.count,
+                        targetName: targetName,
+                        copiedPaths: copiedPaths
+                    ),
+                    systemImage: copiedPaths ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                )
+                    .foregroundStyle(copiedPaths ? .green : .orange)
                 Text(paths.joined(separator: "\n"))
                     .font(.system(.body, design: .monospaced))
                     .textSelection(.enabled)
@@ -680,11 +687,15 @@ private struct DropLandingView: View {
 
             await MainActor.run {
                 switch result {
-                case let .success(uploaded):
+                case let .success(result):
                     status = .progress("Recording transfer...")
-                    recordSucceededUpload(target: target, uploaded: uploaded, operationID: operationID) {
+                    recordSucceededUpload(target: target, uploaded: result.uploaded, operationID: operationID) {
                         isDroppingClipboard = false
-                        status = .success(uploaded.map(\.remoteDisplayPath))
+                        status = .success(
+                            paths: result.uploaded.map(\.remoteDisplayPath),
+                            copiedPaths: result.copyResult == .copied,
+                            targetName: target.name
+                        )
                         refreshClipboard(preservingStatus: true)
                     }
                 case let .failure(failure):
@@ -707,7 +718,7 @@ private struct DropLandingView: View {
         item: ClipboardDropReadyItem,
         snapshot: AppClipboardSnapshot,
         target: SSHTarget
-    ) async -> Result<[UploadedFile], ClipboardUploadFailure> {
+    ) async -> Result<ClipboardUploadSuccess, ClipboardUploadFailure> {
         await Task.detached(priority: .userInitiated) {
             var stagedUpload: StagedUpload?
             do {
@@ -725,9 +736,10 @@ private struct DropLandingView: View {
                     sources = staged.files
                 }
 
-                let uploaded = try UploadService().upload(sources: sources, target: target)
+                let uploaded = try UploadService().upload(sources: sources, target: target, copyToClipboard: false)
+                let copyResult = ClipboardPathCopier.copyRemotePaths(from: uploaded)
                 try? stagedUpload?.cleanup()
-                return .success(uploaded)
+                return .success(ClipboardUploadSuccess(uploaded: uploaded, copyResult: copyResult))
             } catch {
                 try? stagedUpload?.cleanup()
                 return .failure(ClipboardUploadFailure(
@@ -1493,15 +1505,14 @@ private enum AppClipboardReader {
             .urlReadingFileURLsOnly: true
         ]
 
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [NSURL] {
-            return urls.map { $0 as URL }.filter(\.isFileURL)
-        }
+        let typedURLs = (pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [NSURL])?
+            .map { $0 as URL } ?? []
+        let legacyFilePaths = pasteboard.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] ?? []
 
-        guard let fileList = pasteboard.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] else {
-            return []
-        }
-
-        return fileList.map { URL(fileURLWithPath: $0) }
+        return ClipboardFileURLSelection.fileURLs(
+            typedURLs: typedURLs,
+            legacyFilePaths: legacyFilePaths
+        )
     }
 
     private static func readPNGData(from pasteboard: NSPasteboard) -> Data? {
@@ -1529,8 +1540,13 @@ private extension NSImage {
 private enum ClipboardDropStatus: Equatable {
     case idle
     case progress(String)
-    case success([String])
+    case success(paths: [String], copiedPaths: Bool, targetName: String)
     case failure(String)
+}
+
+private struct ClipboardUploadSuccess: Sendable {
+    let uploaded: [UploadedFile]
+    let copyResult: ClipboardPathCopyResult
 }
 
 private struct ClipboardUploadFailure: Error, @unchecked Sendable {
