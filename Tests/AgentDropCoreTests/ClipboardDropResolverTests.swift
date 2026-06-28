@@ -2,6 +2,25 @@ import XCTest
 @testable import AgentDropCore
 
 final class ClipboardDropResolverTests: XCTestCase {
+    func testSnapshotDefaultsToEmptyClipboard() {
+        XCTAssertEqual(
+            ClipboardDropSnapshot(),
+            ClipboardDropSnapshot(fileURLs: [], hasImageData: false, text: nil)
+        )
+    }
+
+    func testInvalidReasonMessageUsesRequiredUnsupportedLocalItemsText() {
+        let reason = ClipboardDropInvalidReason.unsupportedLocalItems([
+            "missing.png: missing",
+            "folder.alias: not a regular file",
+        ])
+
+        XCTAssertEqual(
+            reason.message,
+            "Clipboard contains local items that cannot be dropped: missing.png: missing, folder.alias: not a regular file"
+        )
+    }
+
     func testResolvesSingleValidLocalFileURL() throws {
         let root = try makeTemporaryDirectory()
         let file = root.appendingPathComponent("demo.png")
@@ -125,6 +144,13 @@ final class ClipboardDropResolverTests: XCTestCase {
             sources: [],
             summary: "Clipboard item ready"
         )))
+    }
+
+    func testScreenshotNameDefaultsToCurrentDate() {
+        XCTAssertTrue(
+            ClipboardDropResolver.screenshotName(timeZone: TimeZone(secondsFromGMT: 0)!)
+                .hasPrefix("Screenshot ")
+        )
     }
 }
 

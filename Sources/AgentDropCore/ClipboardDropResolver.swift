@@ -5,7 +5,7 @@ public struct ClipboardDropSnapshot: Equatable, Sendable {
     public let hasImageData: Bool
     public let text: String?
 
-    public init(fileURLs: [URL], hasImageData: Bool, text: String?) {
+    public init(fileURLs: [URL] = [], hasImageData: Bool = false, text: String? = nil) {
         self.fileURLs = fileURLs
         self.hasImageData = hasImageData
         self.text = text
@@ -45,7 +45,8 @@ public enum ClipboardDropInvalidReason: Equatable, Sendable {
     public var message: String {
         switch self {
         case let .unsupportedLocalItems(items):
-            return items.joined(separator: "\n")
+            let joined = items.joined(separator: ", ")
+            return "Clipboard contains local items that cannot be dropped: \(joined)"
         }
     }
 }
@@ -79,7 +80,7 @@ public enum ClipboardDropResolver {
         return .empty
     }
 
-    public static func screenshotName(date: Date, timeZone: TimeZone = .current) -> String {
+    public static func screenshotName(date: Date = Date(), timeZone: TimeZone = .current) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
