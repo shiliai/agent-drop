@@ -104,10 +104,19 @@ public final class DownloadService {
         return downloaded
     }
 
-    private static func defaultDestinationRoot() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
+    public static func defaultDestinationRoot(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        homeDirectory
             .appendingPathComponent("Downloads", isDirectory: true)
             .appendingPathComponent("Agent Drop", isDirectory: true)
+    }
+
+    public static func prepareDefaultDestinationRoot(
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        let root = defaultDestinationRoot(homeDirectory: homeDirectory)
+        try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
     }
 
     private func validate(remotePath: RemotePath, target: SSHTarget) throws {
