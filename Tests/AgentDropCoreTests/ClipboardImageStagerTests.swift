@@ -48,6 +48,24 @@ final class ClipboardImageStagerTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: blockingFile.path))
     }
+
+    func testCleansUpCreatedDirectoryWhenImageWriteFails() throws {
+        let root = try makeTemporaryDirectory()
+        let stagingDirectory = root.appendingPathComponent("fixed", isDirectory: true)
+        let imageDrop = ClipboardImageDrop(
+            remoteName: "missing/Screenshot.png",
+            localDisplayName: "Screenshot.png"
+        )
+
+        XCTAssertThrowsError(try ClipboardImageStager.stage(
+            pngData: Data([1, 2, 3]),
+            imageDrop: imageDrop,
+            baseDirectory: root,
+            directoryName: "fixed"
+        ))
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stagingDirectory.path))
+    }
 }
 
 private func makeTemporaryDirectory() throws -> URL {
