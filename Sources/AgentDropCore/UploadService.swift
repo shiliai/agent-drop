@@ -12,7 +12,7 @@ public struct UploadedFile: Equatable {
     }
 }
 
-public struct UploadSourceFile: Equatable {
+public struct UploadSourceFile: Equatable, Sendable {
     public let sourceURL: URL
     public let remoteName: String
     public let localDisplayName: String
