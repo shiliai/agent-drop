@@ -45,6 +45,20 @@ final class DoctorTests: XCTestCase {
         XCTAssertNil(DependencyFeedback.missingFeedback(in: report, for: .finderUpload))
     }
 
+    func testAppDropDependencyFeedbackRequiresPBClipboardTool() {
+        let doctor = Doctor(toolLookup: { tool in
+            switch tool {
+            case "ssh", "rsync":
+                return "/usr/bin/\(tool)"
+            default:
+                return nil
+            }
+        })
+        let report = doctor.run()
+
+        XCTAssertEqual(DependencyFeedback.missingFeedback(in: report, for: .appDrop)?.missingToolNames, ["pbcopy"])
+    }
+
     func testDependencyFeedbackMessageDoesNotOfferAutomaticInstall() {
         let feedback = DependencyFeedback(missingToolNames: ["rsync"])
 

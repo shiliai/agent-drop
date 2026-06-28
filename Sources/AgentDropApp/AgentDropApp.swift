@@ -201,7 +201,7 @@ private struct TransferWorkspaceView: View {
                 case .drop:
                     DropLandingView(
                         selectedTarget: selectedTarget,
-                        dependencyFeedback: dependencyFeedback(for: .finderUpload),
+                        dependencyFeedback: dependencyFeedback(for: .appDrop),
                         onSwitchToPull: {
                             navigation.transferMode = .pull
                         },
@@ -651,7 +651,7 @@ private struct DropLandingView: View {
         activeClipboardOperationID = operationID
         status = .idle
 
-        let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .finderUpload)
+        let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appDrop)
         if let currentDependencyFeedback {
             status = .failure(currentDependencyFeedback.message)
             return
