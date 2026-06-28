@@ -25,6 +25,7 @@ private struct TransferWindowView: View {
     @State private var historyWatcher: UploadHistoryFileWatcher?
     @State private var isAutoRefreshEnabled = false
     @State private var lastUpdatedAt: Date?
+    @State private var transferStatusSummary = TransferStatusSummary.idle
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,10 +39,13 @@ private struct TransferWindowView: View {
                     case .transfer:
                         TransferWorkspaceView(
                             navigation: $navigation,
+                            transferStatusSummary: $transferStatusSummary,
                             onHistoryRecorded: refreshHistory
                         )
                     case .history:
-                        UploadHistoryView(refreshToken: historyRefreshToken)
+                        WorkspaceContent(title: "History") {
+                            UploadHistoryView(refreshToken: historyRefreshToken)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -52,6 +56,7 @@ private struct TransferWindowView: View {
             UploadHistoryStatusBar(
                 isAutoRefreshEnabled: isAutoRefreshEnabled,
                 lastUpdatedAt: lastUpdatedAt,
+                transferStatusSummary: transferStatusSummary,
                 versionDisplay: AgentDropVersion.display
             )
             .padding(.horizontal, 12)
@@ -161,6 +166,7 @@ private struct AppNavigationButton: View {
 
 private struct TransferWorkspaceView: View {
     @Binding var navigation: TransferNavigationState
+    @Binding var transferStatusSummary: TransferStatusSummary
     let onHistoryRecorded: () -> Void
 
     @State private var targets: [SSHTarget] = []
@@ -180,47 +186,9 @@ private struct TransferWorkspaceView: View {
 
             Divider()
 
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center) {
-                    Text("Transfer")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    Spacer()
-
-                    Picker("Transfer Mode", selection: $navigation.transferMode) {
-                        Text("Drop").tag(TransferMode.drop)
-                        Text("Pull from...").tag(TransferMode.pull)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-
-                switch navigation.transferMode {
-                case .drop:
-                    DropLandingView(
-                        selectedTarget: selectedTarget,
-                        dependencyFeedback: dependencyFeedback(for: .appDrop),
-                        onSwitchToPull: {
-                            navigation.transferMode = .pull
-                        },
-                        onHistoryRecorded: onHistoryRecorded
-                    )
-                case .pull:
-                    PullFormView(
-                        targets: targets,
-                        selectedTargetID: $navigation.selectedTargetID,
-                        remotePathText: $remotePathText,
-                        dependencyFeedback: dependencyFeedback(for: .appPull),
-                        dependencyFeedbackProvider: DependencyFeedbackProvider(),
-                        onHistoryRecorded: onHistoryRecorded
-                    )
-                }
+            WorkspaceContent(title: "Transfer", accessory: { transferModePicker }) {
+                currentTransferPane
             }
-            .padding(24)
-            .background(Color(nsColor: .textBackgroundColor))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .onAppear {
             guard !didInitialLoad else { return }
@@ -237,6 +205,41 @@ private struct TransferWorkspaceView: View {
     private var selectedTarget: SSHTarget? {
         guard let selectedTargetID = navigation.selectedTargetID else { return nil }
         return targets.first { $0.id == selectedTargetID }
+    }
+
+    private var transferModePicker: some View {
+        Picker("Transfer Mode", selection: $navigation.transferMode) {
+            Text("Drop").tag(TransferMode.drop)
+            Text("Pull from...").tag(TransferMode.pull)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 220)
+    }
+
+    @ViewBuilder
+    private var currentTransferPane: some View {
+        switch navigation.transferMode {
+        case .drop:
+            DropLandingView(
+                selectedTarget: selectedTarget,
+                dependencyFeedback: dependencyFeedback(for: .appDrop),
+                transferStatusSummary: $transferStatusSummary,
+                onSwitchToPull: {
+                    navigation.transferMode = .pull
+                },
+                onHistoryRecorded: onHistoryRecorded
+            )
+        case .pull:
+            PullFormView(
+                targets: targets,
+                selectedTargetID: $navigation.selectedTargetID,
+                remotePathText: $remotePathText,
+                dependencyFeedback: dependencyFeedback(for: .appPull),
+                dependencyFeedbackProvider: DependencyFeedbackProvider(),
+                onHistoryRecorded: onHistoryRecorded
+            )
+        }
     }
 
     private func loadTargets(applyClipboardPrefill: Bool) {
@@ -275,6 +278,51 @@ private struct TransferWorkspaceView: View {
         let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
 
         return TargetResolver.merge(active: active, configured: configured)
+    }
+}
+
+private struct WorkspaceContent<Accessory: View, Content: View>: View {
+    let title: String
+    let accessory: Accessory
+    let content: Content
+
+    init(
+        title: String,
+        @ViewBuilder accessory: () -> Accessory,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.accessory = accessory()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text(title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                accessory
+            }
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(24)
+        .background(Color(nsColor: .textBackgroundColor))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private extension WorkspaceContent where Accessory == EmptyView {
+    init(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(title: title, accessory: EmptyView.init, content: content)
     }
 }
 
@@ -363,6 +411,7 @@ private struct DropLandingView: View {
 
     let selectedTarget: SSHTarget?
     let dependencyFeedback: DependencyFeedback?
+    @Binding var transferStatusSummary: TransferStatusSummary
     let dependencyFeedbackProvider = DependencyFeedbackProvider()
     let onSwitchToPull: () -> Void
     let onHistoryRecorded: () -> Void
@@ -662,11 +711,14 @@ private struct DropLandingView: View {
         let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appDrop)
         if let currentDependencyFeedback {
             status = .failure(currentDependencyFeedback.message)
+            transferStatusSummary = .failure(currentDependencyFeedback.message)
             return
         }
 
         guard let target = selectedTarget else {
-            status = .failure("Select an SSH target before dropping clipboard contents.")
+            let message = "Select an SSH target before dropping clipboard contents."
+            status = .failure(message)
+            transferStatusSummary = .failure(message)
             return
         }
 
@@ -676,12 +728,15 @@ private struct DropLandingView: View {
         clipboardResolution = refreshedResolution
 
         guard case let .ready(item) = refreshedResolution else {
-            status = .failure(clipboardMessage)
+            let message = clipboardMessage
+            status = .failure(message)
+            transferStatusSummary = .failure(message)
             return
         }
 
         isDroppingClipboard = true
         status = .progress("Uploading clipboard contents...")
+        transferStatusSummary = .progress("Uploading clipboard contents...")
 
         Task {
             let result = await runClipboardUpload(item: item, snapshot: refreshedSnapshot, target: target)
@@ -690,6 +745,7 @@ private struct DropLandingView: View {
                 switch result {
                 case let .success(result):
                     status = .progress("Recording transfer...")
+                    transferStatusSummary = .progress("Recording transfer...")
                     recordSucceededUpload(target: target, uploaded: result.uploaded, operationID: operationID) {
                         isDroppingClipboard = false
                         status = .success(
@@ -697,12 +753,18 @@ private struct DropLandingView: View {
                             copiedPaths: result.copyResult == .copied,
                             targetName: target.name
                         )
+                        transferStatusSummary = .uploadSuccess(
+                            fileCount: result.uploaded.count,
+                            targetName: target.name,
+                            copiedPaths: result.copyResult == .copied
+                        )
                         refreshClipboard(preservingStatus: true)
                     }
                 case let .failure(failure):
                     let message = userFacingMessage(for: failure.error)
                     isDroppingClipboard = false
                     status = .failure(message)
+                    transferStatusSummary = .failure(message)
                     recordFailedUpload(
                         target: target,
                         item: item,
@@ -780,6 +842,7 @@ private struct DropLandingView: View {
             onRecorded: nil,
             onRecordFailed: { historyErrorMessage in
                 status = .failure("\(message)\nCould not record transfer history: \(historyErrorMessage)")
+                transferStatusSummary = .failure("\(message) Could not record transfer history.")
             }
         )
     }
@@ -807,6 +870,7 @@ private struct DropLandingView: View {
                         onRecordFailed(message)
                     } else {
                         status = .failure("Could not record transfer history: \(message)")
+                        transferStatusSummary = .failure("Could not record transfer history: \(message)")
                     }
                 }
             }
@@ -1285,17 +1349,19 @@ private struct UploadHistoryView: View {
 private struct UploadHistoryStatusBar: View {
     let isAutoRefreshEnabled: Bool
     let lastUpdatedAt: Date?
+    let transferStatusSummary: TransferStatusSummary
     let versionDisplay: String
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(isAutoRefreshEnabled ? Color.green : Color.orange)
-                .frame(width: 7, height: 7)
-                .help(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
-                .accessibilityLabel(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
+            Image(systemName: transferStatusSummary.systemImageName)
+                .foregroundStyle(statusColor)
+                .imageScale(.small)
+                .frame(width: 12, height: 12)
+                .help(statusText)
+                .accessibilityLabel(statusText)
 
-            Text(lastUpdatedText)
+            Text(statusText)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .layoutPriority(1)
@@ -1305,18 +1371,28 @@ private struct UploadHistoryStatusBar: View {
             Text(versionDisplay)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .help(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.top, 2)
     }
 
-    private var lastUpdatedText: String {
-        guard let lastUpdatedAt else {
-            return "Last updated: never"
-        }
+    private var statusText: String {
+        transferStatusSummary.statusText(lastUpdatedAt: lastUpdatedAt)
+    }
 
-        return "Last updated: \(lastUpdatedAt.formatted(date: .omitted, time: .standard))"
+    private var statusColor: Color {
+        switch transferStatusSummary {
+        case .idle:
+            return isAutoRefreshEnabled ? .green : .orange
+        case .progress:
+            return .blue
+        case let .uploadSuccess(_, _, copiedPaths):
+            return copiedPaths ? .green : .orange
+        case .failure:
+            return .red
+        }
     }
 }
 
