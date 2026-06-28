@@ -392,11 +392,8 @@ private struct DropLandingView: View {
                     .textSelection(.enabled)
             }
 
-            HStack(alignment: .top, spacing: 16) {
-                finderWorkflowCard
-                clipboardCard
-            }
-            .frame(maxWidth: 760, alignment: .leading)
+            workflowCards
+                .frame(maxWidth: 760, alignment: .leading)
 
             statusView
 
@@ -440,8 +437,7 @@ private struct DropLandingView: View {
             }
         }
         .padding(18)
-        .frame(width: 360, alignment: .topLeading)
-        .frame(minHeight: 210, alignment: .topLeading)
+        .frame(minWidth: 320, maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
@@ -494,13 +490,27 @@ private struct DropLandingView: View {
             .help(dropClipboardHelp)
         }
         .padding(18)
-        .frame(width: 360, alignment: .topLeading)
-        .frame(minHeight: 210, alignment: .topLeading)
+        .frame(minWidth: 320, maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color(nsColor: .separatorColor).opacity(0.55))
+        }
+    }
+
+    @ViewBuilder
+    private var workflowCards: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                finderWorkflowCard
+                clipboardCard
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                finderWorkflowCard
+                clipboardCard
+            }
         }
     }
 
@@ -1538,5 +1548,3 @@ private enum ClipboardDropAppError: LocalizedError {
         }
     }
 }
-
-extension UploadedFile: @unchecked @retroactive Sendable {}

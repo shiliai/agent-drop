@@ -1,6 +1,6 @@
 import Foundation
 
-public struct UploadedFile: Equatable {
+public struct UploadedFile: Equatable, Sendable {
     public let localURL: URL
     public let remoteDisplayPath: String
     public let localDisplayName: String
