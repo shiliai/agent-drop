@@ -23,62 +23,84 @@ EOF
 }
 
 find_default_app() {
-    /usr/bin/find "$HOME/Library/Developer/Xcode/DerivedData" \
+    local derived_data="$HOME/Library/Developer/Xcode/DerivedData"
+    if [[ ! -d "$derived_data" ]]; then
+        return 0
+    fi
+
+    /usr/bin/find "$derived_data" \
         -path "*/AgentDrop-*/Build/Products/Debug/AgentDrop.app" \
         -type d \
         -not -path "*/Index.noindex/*" \
-        | /usr/bin/sort \
-        | /usr/bin/tail -n 1
+        -print0 \
+        | while IFS= read -r -d '' app_path; do
+            printf '%s\t%s\n' "$(/usr/bin/stat -f '%m' "$app_path")" "$app_path"
+        done \
+        | /usr/bin/sort -n \
+        | /usr/bin/tail -n 1 \
+        | /usr/bin/cut -f2-
 }
 
-APP_SRC="${1:-}"
-if [[ "${APP_SRC:-}" == "-h" || "${APP_SRC:-}" == "--help" ]]; then
-    usage
-    exit 0
-fi
-
-if [[ -z "$APP_SRC" ]]; then
-    APP_SRC="$(find_default_app)"
-fi
-
-if [[ -z "$APP_SRC" || ! -d "$APP_SRC" ]]; then
-    echo "error: AgentDrop.app not found. Build the app first or pass an app path." >&2
-    exit 1
-fi
-
-if [[ "$(basename "$APP_SRC")" != "AgentDrop.app" && "$(basename "$APP_SRC")" != "$APP_NAME" ]]; then
-    echo "error: expected an AgentDrop.app bundle, got: $APP_SRC" >&2
-    exit 1
-fi
-
-cleanup_mount() {
-    if /sbin/mount | /usr/bin/grep -q "on $MOUNT_POINT "; then
+cleanup() {
+    if /sbin/mount | /usr/bin/grep -Fq " on $MOUNT_POINT "; then
         /usr/bin/hdiutil detach "$MOUNT_POINT" >/dev/null || true
     fi
-    /bin/rm -rf "$MOUNT_POINT"
+    /bin/rm -rf "$STAGING_DIR" "$MOUNT_POINT"
 }
 
-trap cleanup_mount EXIT
+package_developer_dmg() {
+    local app_src="$1"
 
-/bin/rm -rf "$STAGING_DIR" "$DMG_PATH" "$MOUNT_POINT"
-/bin/mkdir -p "$STAGING_DIR" "$DIST_DIR"
+    if [[ -z "$app_src" || ! -d "$app_src" ]]; then
+        echo "error: AgentDrop.app not found. Build the app first or pass an app path." >&2
+        exit 1
+    fi
 
-/usr/bin/ditto "$APP_SRC" "$STAGING_DIR/$APP_NAME"
-/bin/ln -s /Applications "$STAGING_DIR/Applications"
+    if [[ "$(basename "$app_src")" != "AgentDrop.app" && "$(basename "$app_src")" != "$APP_NAME" ]]; then
+        echo "error: expected an AgentDrop.app bundle, got: $app_src" >&2
+        exit 1
+    fi
 
-/usr/bin/hdiutil create \
-    -volname "$VOLUME_NAME" \
-    -srcfolder "$STAGING_DIR" \
-    -ov \
-    -format UDZO \
-    "$DMG_PATH"
+    trap cleanup EXIT
 
-/bin/mkdir -p "$MOUNT_POINT"
-/usr/bin/hdiutil attach "$DMG_PATH" -nobrowse -mountpoint "$MOUNT_POINT" >/dev/null
-test -d "$MOUNT_POINT/$APP_NAME"
-test -L "$MOUNT_POINT/Applications"
+    /bin/rm -rf "$STAGING_DIR" "$DMG_PATH" "$MOUNT_POINT"
+    /bin/mkdir -p "$STAGING_DIR" "$DIST_DIR"
 
-/usr/bin/hdiutil detach "$MOUNT_POINT" >/dev/null
-/bin/rm -rf "$STAGING_DIR"
+    /usr/bin/ditto "$app_src" "$STAGING_DIR/$APP_NAME"
+    /bin/ln -s /Applications "$STAGING_DIR/Applications"
 
-echo "$DMG_PATH"
+    /usr/bin/hdiutil create \
+        -volname "$VOLUME_NAME" \
+        -srcfolder "$STAGING_DIR" \
+        -ov \
+        -format UDZO \
+        "$DMG_PATH"
+
+    /bin/mkdir -p "$MOUNT_POINT"
+    /usr/bin/hdiutil attach "$DMG_PATH" -nobrowse -mountpoint "$MOUNT_POINT" >/dev/null
+    test -d "$MOUNT_POINT/$APP_NAME"
+    test -L "$MOUNT_POINT/Applications"
+
+    /usr/bin/hdiutil detach "$MOUNT_POINT" >/dev/null
+    /bin/rm -rf "$STAGING_DIR"
+
+    echo "$DMG_PATH"
+}
+
+main() {
+    local app_src="${1:-}"
+    if [[ "${app_src:-}" == "-h" || "${app_src:-}" == "--help" ]]; then
+        usage
+        exit 0
+    fi
+
+    if [[ -z "$app_src" ]]; then
+        app_src="$(find_default_app)"
+    fi
+
+    package_developer_dmg "$app_src"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

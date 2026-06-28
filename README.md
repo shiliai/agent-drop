@@ -40,10 +40,6 @@ Transfer window with shared Hosts, Drop/Pull modes, and the global status bar:
 
 ![Agent Drop transfer window](docs/assets/agent-drop-app.png)
 
-Finder upload and pull workflow:
-
-![Agent Drop Finder upload and pull workflow](docs/assets/agent-drop-workflow.png)
-
 ## V1 Goals
 
 - Run on macOS.
