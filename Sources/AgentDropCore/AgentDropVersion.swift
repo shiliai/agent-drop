@@ -1,5 +1,5 @@
 public enum AgentDropVersion {
-    public static let current = "0.2.1"
+    public static let current = "0.2.2"
     public static let build = "3"
     public static let display = "v\(current) (\(build))"
 }

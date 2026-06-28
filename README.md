@@ -40,10 +40,6 @@ Transfer window with shared Hosts, Drop/Pull modes, and the global status bar:
 
 ![Agent Drop transfer window](docs/assets/agent-drop-app.png)
 
-Finder upload and pull workflow:
-
-![Agent Drop Finder upload and pull workflow](docs/assets/agent-drop-workflow.png)
-
 ## V1 Goals
 
 - Run on macOS.
@@ -140,6 +136,20 @@ Build a signed Debug app:
 ```bash
 xcodebuild -project AgentDrop.xcodeproj -scheme AgentDrop -configuration Debug build
 ```
+
+Package a developer DMG for release testing:
+
+```bash
+scripts/package_developer_dmg.sh
+```
+
+The DMG is written to `dist/AgentDrop-developer.dmg`. Open it, then drag
+`Agent Drop.app` into `Applications`.
+
+This is a developer build, not a notarized public release. On first launch,
+macOS may require allowing the app in Privacy & Security. The Finder extension
+still needs to be enabled in System Settings > Login Items & Extensions >
+Extensions, followed by a Finder restart if the right-click menu does not appear.
 
 Install the signed app locally:
 

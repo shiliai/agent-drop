@@ -501,6 +501,13 @@ private struct PullFormView: View {
                     .frame(minWidth: 170)
                     .disabled(isDownloading)
 
+                    Button {
+                        openDestinationInFinder()
+                    } label: {
+                        Label("Open Finder", systemImage: "folder")
+                    }
+                    .controlSize(.large)
+
                     Text("Copies downloaded local paths to the clipboard.")
                         .foregroundStyle(.secondary)
 
@@ -657,6 +664,18 @@ private struct PullFormView: View {
                 return .failure(error)
             }
         }.value
+    }
+
+    private func openDestinationInFinder() {
+        do {
+            let destinationRoot = try DownloadService.prepareDefaultDestinationRoot()
+            guard NSWorkspace.shared.open(destinationRoot) else {
+                status = .failure("Could not open the download folder in Finder.")
+                return
+            }
+        } catch {
+            status = .failure("Could not prepare the download folder: \(CLIErrorFormatter.message(for: error))")
+        }
     }
 
     private func recordSucceededDownload(

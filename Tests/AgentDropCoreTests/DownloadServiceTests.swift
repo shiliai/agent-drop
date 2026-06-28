@@ -2,6 +2,20 @@ import XCTest
 @testable import AgentDropCore
 
 final class DownloadServiceTests: XCTestCase {
+    func testDefaultDestinationRootUsesAgentDropDownloadsFolder() {
+        let root = DownloadService.defaultDestinationRoot(homeDirectory: URL(fileURLWithPath: "/Users/alex", isDirectory: true))
+
+        XCTAssertEqual(root.path, "/Users/alex/Downloads/Agent Drop")
+    }
+
+    func testPrepareDefaultDestinationRootCreatesFolder() throws {
+        let home = try makeDownloadTemporaryDirectory()
+        let root = try DownloadService.prepareDefaultDestinationRoot(homeDirectory: home)
+
+        XCTAssertEqual(root.path, home.appendingPathComponent("Downloads/Agent Drop").path)
+        XCTAssertTrue(isDownloadDirectory(root))
+    }
+
     func testFailsWhenRemotePathListIsEmpty() {
         let service = DownloadService(
             runner: FakeDownloadCommandRunner(results: []),
@@ -551,4 +565,10 @@ private func makeDownloadTemporaryDirectory() throws -> URL {
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
+}
+
+private func isDownloadDirectory(_ url: URL) -> Bool {
+    var isDirectory: ObjCBool = false
+    let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+    return exists && isDirectory.boolValue
 }

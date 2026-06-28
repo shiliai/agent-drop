@@ -3,8 +3,8 @@ import XCTest
 
 final class AgentDropCoreSmokeTests: XCTestCase {
     func testVersionConstantIsAvailable() {
-        XCTAssertEqual(AgentDropVersion.current, "0.2.1")
+        XCTAssertEqual(AgentDropVersion.current, "0.2.2")
         XCTAssertEqual(AgentDropVersion.build, "3")
-        XCTAssertEqual(AgentDropVersion.display, "v0.2.1 (3)")
+        XCTAssertEqual(AgentDropVersion.display, "v0.2.2 (3)")
     }
 }
