@@ -72,6 +72,7 @@ final class FinderSync: FIFinderSync {
         let urls = FIFinderSyncController.default().selectedItemURLs() ?? []
         Self.recordDiagnostic("send requested target=\(connectName) selected=\(urls.map(\.path).joined(separator: ", "))")
 
+        let historyStore = self.historyStore
         DispatchQueue.global(qos: .userInitiated).async {
             if let feedback = DependencyFeedback.missingFeedback(in: Doctor().run(), for: .finderUpload) {
                 Self.recordDiagnostic("send rejected target=\(connectName) reason=missing dependencies tools=\(feedback.missingToolNames.joined(separator: ","))")
@@ -87,14 +88,29 @@ final class FinderSync: FIFinderSync {
             }
 
             let target = SSHTarget(name: connectName, connectName: connectName, source: .config)
+            let transferID = UUID()
+            let startedAt = Date()
+            let startedEntry = UploadHistoryEntry.uploadStarted(
+                id: transferID,
+                targetName: target.name,
+                fileURLs: selection.files,
+                createdAt: startedAt
+            )
+            Self.upsertHistory(startedEntry, store: historyStore)
+
             do {
                 Self.recordDiagnostic("upload start target=\(target.connectName) files=\(selection.files.map(\.lastPathComponent).joined(separator: ", "))")
                 let staged = try UploadStager.stage(files: selection.files)
                 defer { try? staged.cleanup() }
                 Self.recordDiagnostic("upload staged target=\(target.connectName) directory=\(staged.directory.path) files=\(staged.files.map(\.sourceURL.lastPathComponent).joined(separator: ", "))")
-                let uploaded = try UploadService(runner: self.runner).upload(sources: staged.files, target: target, copyToClipboard: false)
-                let entry = UploadHistoryEntry.succeeded(targetName: target.name, uploadedFiles: uploaded)
-                Self.recordHistory(entry, store: self.historyStore)
+                let uploaded = try UploadService(runner: ProcessCommandRunner()).upload(sources: staged.files, target: target, copyToClipboard: false)
+                let entry = UploadHistoryEntry.succeeded(
+                    targetName: target.name,
+                    uploadedFiles: uploaded,
+                    createdAt: startedAt,
+                    id: transferID
+                )
+                Self.upsertHistory(entry, store: historyStore)
                 let remotePaths = uploaded.map(\.remoteDisplayPath).joined(separator: "\n")
                 let copied = Self.copyToPasteboard(remotePaths)
                 let body = UploadFeedbackFormatter.success(fileCount: uploaded.count, targetName: target.name, copiedPaths: copied)
@@ -106,9 +122,11 @@ final class FinderSync: FIFinderSync {
                 let entry = UploadHistoryEntry.failed(
                     targetName: target.name,
                     fileURLs: selection.files,
-                    errorDescription: String(describing: error)
+                    errorDescription: String(describing: error),
+                    createdAt: startedAt,
+                    id: transferID
                 )
-                Self.recordHistory(entry, store: self.historyStore)
+                Self.upsertHistory(entry, store: historyStore)
                 Self.markFiles(selection.files, badgeIdentifier: failureBadgeIdentifier)
                 Self.notify(title: "Agent Drop failed", body: UploadFeedbackFormatter.failure(targetName: target.name, errorDescription: String(describing: error)))
             }
@@ -236,6 +254,15 @@ final class FinderSync: FIFinderSync {
             recordDiagnostic("history recorded id=\(entry.id.uuidString) status=\(entry.status.rawValue)")
         } catch {
             recordDiagnostic("history failed id=\(entry.id.uuidString) error=\(String(describing: error))")
+        }
+    }
+
+    private static func upsertHistory(_ entry: UploadHistoryEntry, store: UploadHistoryStore) {
+        do {
+            try store.upsert(entry)
+            recordDiagnostic("history upserted id=\(entry.id.uuidString) status=\(entry.status.rawValue)")
+        } catch {
+            recordDiagnostic("history upsert failed id=\(entry.id.uuidString) error=\(String(describing: error))")
         }
     }
 
