@@ -1439,6 +1439,8 @@ private struct UploadHistoryStatusBar: View {
             return isAutoRefreshEnabled ? .green : .orange
         case .progress:
             return .blue
+        case .success:
+            return .green
         case let .uploadSuccess(_, _, copiedPaths):
             return copiedPaths ? .green : .orange
         case .failure:
