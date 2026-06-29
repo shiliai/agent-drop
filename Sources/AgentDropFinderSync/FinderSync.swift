@@ -103,7 +103,7 @@ final class FinderSync: FIFinderSync {
                 let staged = try UploadStager.stage(files: selection.files)
                 defer { try? staged.cleanup() }
                 Self.recordDiagnostic("upload staged target=\(target.connectName) directory=\(staged.directory.path) files=\(staged.files.map(\.sourceURL.lastPathComponent).joined(separator: ", "))")
-                let uploaded = try UploadService(runner: ProcessCommandRunner()).upload(sources: staged.files, target: target, copyToClipboard: false)
+                let uploaded = try UploadService(runner: self.runner).upload(sources: staged.files, target: target, copyToClipboard: false)
                 let entry = UploadHistoryEntry.succeeded(
                     targetName: target.name,
                     uploadedFiles: uploaded,
