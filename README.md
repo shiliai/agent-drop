@@ -196,6 +196,8 @@ directory contents and choosing a suffixed name if the local destination exists.
   through `agentdrop://pull`.
 - The root menu item includes a small template upload icon.
 - On upload success or failure, Finder badges the selected file briefly.
+- While a Finder upload is running, the extension writes a live history row so
+  the app can show the active upload in the global status bar from any section.
 - The extension writes diagnostics to
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`.
 - macOS notification delivery from Finder Sync is best-effort. The app's
@@ -211,6 +213,9 @@ container:
 The app reads that file to show `History`. Selecting a successful
 upload copies remote paths again; selecting a successful download copies local
 paths again. Failed rows include a short error and do not have a copy payload.
+Finder uploads first appear as `Uploading` rows, then update in place to success
+or failure. If the app finds an old unfinished Finder upload, it shows the row
+as status unknown instead of leaving the status bar active forever.
 The bottom status bar shows the refresh status dot, the last history refresh
 time, and the app version/build. The JSON file name is kept for compatibility
 even though it now stores both transfer directions.
@@ -240,7 +245,9 @@ tail -n 80 "$HOME/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/
 
 Expected: `pbpaste` contains the final remote path, the remote file or folder
 exists, directory uploads preserve their contents, and the diagnostic log
-records `upload success`.
+records `upload success`. If `Agent Drop.app` is open during the upload, the
+global status bar shows the active upload from any section and `History` shows
+an `Uploading` row that updates to success or failure.
 
 After a Finder upload, verify history was written:
 
