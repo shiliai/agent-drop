@@ -32,6 +32,9 @@ private struct TransferWindowView: View {
     @State private var historyLoadErrorMessage: String?
     @State private var historyStatusMessage: String?
     @State private var activeHistoryLoadID: UUID?
+    @State private var activeFinderUploadID: UploadHistoryEntry.ID?
+    @State private var isShowingFinderUploadStatus = false
+    @State private var finderStatusStaleTimer: Timer?
 
     private let historyStore = AsyncUploadHistoryStore()
 
@@ -53,7 +56,7 @@ private struct TransferWindowView: View {
                             navigation: $navigation,
                             targets: targets,
                             doctorReport: doctorReport,
-                            transferStatusSummary: $transferStatusSummary,
+                            transferStatusSummary: nonFinderTransferStatusSummary,
                             onHistoryRecorded: refreshHistory
                         )
                     case .history:
@@ -154,6 +157,15 @@ private struct TransferWindowView: View {
         historyEntries.first { $0.id == selectedHistoryID } ?? historyEntries.first
     }
 
+    private var nonFinderTransferStatusSummary: Binding<TransferStatusSummary> {
+        Binding {
+            transferStatusSummary
+        } set: { newStatus in
+            clearFinderUploadStatusOwnership()
+            transferStatusSummary = newStatus
+        }
+    }
+
     private func apply(_ route: AgentDropRoute?) {
         guard let route else { return }
 
@@ -210,12 +222,17 @@ private struct TransferWindowView: View {
                 switch result {
                 case let .success(loadedEntries):
                     historyEntries = loadedEntries
+                    syncFinderUploadStatus(from: loadedEntries)
                     historyLoadErrorMessage = nil
                     if selectedHistoryID == nil || !loadedEntries.contains(where: { $0.id == selectedHistoryID }) {
                         selectedHistoryID = loadedEntries.first?.id
                     }
                     historyStatusMessage = nil
                 case .failure:
+                    if isShowingFinderUploadStatus {
+                        clearFinderUploadStatusOwnership()
+                        transferStatusSummary = .failure("Could not read transfer history.")
+                    }
                     historyEntries = []
                     selectedHistoryID = nil
                     historyLoadErrorMessage = "Could not read transfer history."
@@ -223,6 +240,51 @@ private struct TransferWindowView: View {
                 }
             }
         }
+    }
+
+    private func syncFinderUploadStatus(from entries: [UploadHistoryEntry], now: Date = Date()) {
+        let resolution = FinderUploadStatusResolver.resolve(
+            entries: entries,
+            currentStatus: transferStatusSummary,
+            activeUploadID: activeFinderUploadID,
+            isShowingFinderUploadStatus: isShowingFinderUploadStatus,
+            now: now
+        )
+
+        activeFinderUploadID = resolution.activeUploadID
+        isShowingFinderUploadStatus = resolution.isShowingFinderUploadStatus
+        transferStatusSummary = resolution.transferStatusSummary
+
+        if let staleRefreshEntry = resolution.staleRefreshEntry {
+            scheduleFinderStatusStaleRefresh(for: staleRefreshEntry, now: now)
+            return
+        }
+
+        invalidateFinderStatusStaleTimer()
+    }
+
+    private func scheduleFinderStatusStaleRefresh(for entry: UploadHistoryEntry, now: Date) {
+        invalidateFinderStatusStaleTimer()
+
+        let staleDate = entry.createdAt.addingTimeInterval(TransferStatusSummary.defaultRunningHistoryStaleInterval)
+        let fireInterval = max(staleDate.timeIntervalSince(now), 0.1)
+        finderStatusStaleTimer = Timer.scheduledTimer(withTimeInterval: fireInterval, repeats: false) { _ in
+            Task { @MainActor in
+                finderStatusStaleTimer = nil
+                refreshHistory()
+            }
+        }
+    }
+
+    private func clearFinderUploadStatusOwnership() {
+        activeFinderUploadID = nil
+        isShowingFinderUploadStatus = false
+        invalidateFinderStatusStaleTimer()
+    }
+
+    private func invalidateFinderStatusStaleTimer() {
+        finderStatusStaleTimer?.invalidate()
+        finderStatusStaleTimer = nil
     }
 
     private func startHistoryWatcher() {
@@ -1439,6 +1501,8 @@ private struct UploadHistoryStatusBar: View {
             return isAutoRefreshEnabled ? .green : .orange
         case .progress:
             return .blue
+        case .success:
+            return .green
         case let .uploadSuccess(_, _, copiedPaths):
             return copiedPaths ? .green : .orange
         case .failure:
@@ -1471,8 +1535,8 @@ private struct UploadHistoryRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Label(entry.status == .succeeded ? "Succeeded" : "Failed", systemImage: entry.status == .succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(entry.status == .succeeded ? .green : .red)
+                Label(statusTitle, systemImage: statusImageName)
+                    .foregroundStyle(statusColor)
                     .labelStyle(.iconOnly)
                 Text(entry.targetName)
                     .fontWeight(.medium)
@@ -1496,10 +1560,55 @@ private struct UploadHistoryRow: View {
 
     private var summary: String {
         let noun = entry.localFileNames.count == 1 ? "file" : "files"
-        if entry.status == .succeeded {
+        switch entry.status {
+        case .running:
+            if isStaleRunning {
+                return "Upload status unknown"
+            }
+            return "\(entry.localFileNames.count) \(noun) uploading"
+        case .succeeded:
             return "\(entry.localFileNames.count) \(noun) \(entry.direction == .download ? "downloaded" : "uploaded")"
+        case .failed:
+            return entry.errorMessage ?? "\(entry.direction == .download ? "Download" : "Upload") failed"
         }
-        return entry.errorMessage ?? "\(entry.direction == .download ? "Download" : "Upload") failed"
+    }
+
+    private var statusTitle: String {
+        switch entry.status {
+        case .running:
+            return isStaleRunning ? "Status Unknown" : "Uploading"
+        case .succeeded:
+            return "Succeeded"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    private var statusImageName: String {
+        switch entry.status {
+        case .running:
+            return isStaleRunning ? "questionmark.circle.fill" : "arrow.up.circle.fill"
+        case .succeeded:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "xmark.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch entry.status {
+        case .running:
+            return isStaleRunning ? .orange : .blue
+        case .succeeded:
+            return .green
+        case .failed:
+            return .red
+        }
+    }
+
+    private var isStaleRunning: Bool {
+        entry.status == .running
+            && Date().timeIntervalSince(entry.createdAt) > TransferStatusSummary.defaultRunningHistoryStaleInterval
     }
 }
 
@@ -1532,8 +1641,8 @@ private struct UploadHistoryDetail: View {
                 }
 
                 LabeledContent("Status") {
-                    Text(entry.status == .succeeded ? "Succeeded" : "Failed")
-                        .foregroundStyle(entry.status == .succeeded ? .green : .red)
+                    Text(statusText)
+                        .foregroundStyle(statusColor)
                 }
 
                 if !entry.remoteDisplayPaths.isEmpty {
@@ -1548,6 +1657,11 @@ private struct UploadHistoryDetail: View {
                             .background(Color(nsColor: .textBackgroundColor))
                             .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
+                }
+
+                if entry.status == .running && entry.remoteDisplayPaths.isEmpty {
+                    Text(isStaleRunning ? "The upload did not finish cleanly." : "Remote paths will appear after upload succeeds.")
+                        .foregroundStyle(.secondary)
                 }
 
                 if let errorMessage = entry.errorMessage {
@@ -1599,6 +1713,33 @@ private struct UploadHistoryDetail: View {
             return entry.localDisplayPaths
         }
         return entry.localFileNames
+    }
+
+    private var statusText: String {
+        switch entry.status {
+        case .running:
+            return isStaleRunning ? "Status Unknown" : "Uploading"
+        case .succeeded:
+            return "Succeeded"
+        case .failed:
+            return "Failed"
+        }
+    }
+
+    private var statusColor: Color {
+        switch entry.status {
+        case .running:
+            return isStaleRunning ? .orange : .blue
+        case .succeeded:
+            return .green
+        case .failed:
+            return .red
+        }
+    }
+
+    private var isStaleRunning: Bool {
+        entry.status == .running
+            && Date().timeIntervalSince(entry.createdAt) > TransferStatusSummary.defaultRunningHistoryStaleInterval
     }
 }
 
