@@ -34,6 +34,7 @@ private struct TransferWindowView: View {
     @State private var activeHistoryLoadID: UUID?
     @State private var activeFinderUploadID: UploadHistoryEntry.ID?
     @State private var isShowingFinderUploadStatus = false
+    @State private var finderStatusStaleTimer: Timer?
 
     private let historyStore = AsyncUploadHistoryStore()
 
@@ -55,7 +56,7 @@ private struct TransferWindowView: View {
                             navigation: $navigation,
                             targets: targets,
                             doctorReport: doctorReport,
-                            transferStatusSummary: $transferStatusSummary,
+                            transferStatusSummary: nonFinderTransferStatusSummary,
                             onHistoryRecorded: refreshHistory
                         )
                     case .history:
@@ -156,6 +157,15 @@ private struct TransferWindowView: View {
         historyEntries.first { $0.id == selectedHistoryID } ?? historyEntries.first
     }
 
+    private var nonFinderTransferStatusSummary: Binding<TransferStatusSummary> {
+        Binding {
+            transferStatusSummary
+        } set: { newStatus in
+            clearFinderUploadStatusOwnership()
+            transferStatusSummary = newStatus
+        }
+    }
+
     private func apply(_ route: AgentDropRoute?) {
         guard let route else { return }
 
@@ -219,6 +229,10 @@ private struct TransferWindowView: View {
                     }
                     historyStatusMessage = nil
                 case .failure:
+                    if isShowingFinderUploadStatus {
+                        clearFinderUploadStatusOwnership()
+                        transferStatusSummary = .failure("Could not read transfer history.")
+                    }
                     historyEntries = []
                     selectedHistoryID = nil
                     historyLoadErrorMessage = "Could not read transfer history."
@@ -234,9 +248,13 @@ private struct TransferWindowView: View {
             .filter({ $0.direction == .upload && $0.status == .running })
             .sorted(by: { $0.createdAt > $1.createdAt })
             .first(where: { now.timeIntervalSince($0.createdAt) <= TransferStatusSummary.defaultRunningHistoryStaleInterval }) {
+            guard isShowingFinderUploadStatus || transferStatusSummary == .idle else {
+                return
+            }
             activeFinderUploadID = runningEntry.id
             isShowingFinderUploadStatus = true
             transferStatusSummary = runningSummary
+            scheduleFinderStatusStaleRefresh(for: runningEntry, now: now)
             return
         }
 
@@ -262,8 +280,31 @@ private struct TransferWindowView: View {
             transferStatusSummary = .idle
         }
 
-        self.activeFinderUploadID = nil
+        clearFinderUploadStatusOwnership()
+    }
+
+    private func scheduleFinderStatusStaleRefresh(for entry: UploadHistoryEntry, now: Date) {
+        invalidateFinderStatusStaleTimer()
+
+        let staleDate = entry.createdAt.addingTimeInterval(TransferStatusSummary.defaultRunningHistoryStaleInterval)
+        let fireInterval = max(staleDate.timeIntervalSince(now), 0.1)
+        finderStatusStaleTimer = Timer.scheduledTimer(withTimeInterval: fireInterval, repeats: false) { _ in
+            Task { @MainActor in
+                finderStatusStaleTimer = nil
+                refreshHistory()
+            }
+        }
+    }
+
+    private func clearFinderUploadStatusOwnership() {
+        activeFinderUploadID = nil
         isShowingFinderUploadStatus = false
+        invalidateFinderStatusStaleTimer()
+    }
+
+    private func invalidateFinderStatusStaleTimer() {
+        finderStatusStaleTimer?.invalidate()
+        finderStatusStaleTimer = nil
     }
 
     private func startHistoryWatcher() {
