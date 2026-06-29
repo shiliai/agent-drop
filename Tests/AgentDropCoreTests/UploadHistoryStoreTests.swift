@@ -60,6 +60,101 @@ final class UploadHistoryStoreTests: XCTestCase {
         XCTAssertEqual(try store.load().map(\.targetName), ["four", "three", "two"])
     }
 
+    func testUpsertReplacesEntryWithSameID() throws {
+        let root = try temporaryDirectory()
+        let store = UploadHistoryStore(historyFileURL: root.appendingPathComponent("upload-history.json"))
+        let transferID = UUID()
+        let startedAt = Date(timeIntervalSince1970: 200)
+        let running = UploadHistoryEntry.uploadStarted(
+            id: transferID,
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/demo.png")],
+            createdAt: startedAt
+        )
+        let succeeded = UploadHistoryEntry.succeeded(
+            targetName: "x570",
+            uploadedFiles: [
+                UploadedFile(
+                    localURL: URL(fileURLWithPath: "/tmp/demo.png"),
+                    remoteDisplayPath: "~/.agent-inbox/2026-06-29/demo.png"
+                )
+            ],
+            createdAt: startedAt,
+            id: transferID
+        )
+
+        try store.upsert(running)
+        try store.upsert(succeeded)
+
+        XCTAssertEqual(try store.load(), [succeeded])
+    }
+
+    func testUpsertInsertsWhenEntryIsMissing() throws {
+        let root = try temporaryDirectory()
+        let store = UploadHistoryStore(historyFileURL: root.appendingPathComponent("upload-history.json"))
+        let succeeded = UploadHistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 300),
+            targetName: "x570",
+            status: .succeeded,
+            localFileNames: ["demo.png"],
+            remoteDisplayPaths: ["~/.agent-inbox/2026-06-29/demo.png"],
+            errorMessage: nil
+        )
+
+        try store.upsert(succeeded)
+
+        XCTAssertEqual(try store.load(), [succeeded])
+    }
+
+    func testUpsertSortsAndTrimsAfterReplacement() throws {
+        let root = try temporaryDirectory()
+        let store = UploadHistoryStore(historyFileURL: root.appendingPathComponent("upload-history.json"), limit: 2)
+        let oldest = UploadHistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 100),
+            targetName: "oldest",
+            status: .succeeded,
+            localFileNames: ["oldest.png"],
+            remoteDisplayPaths: ["~/.agent-inbox/2026-06-29/oldest.png"],
+            errorMessage: nil
+        )
+        let middle = UploadHistoryEntry(
+            id: UUID(),
+            createdAt: Date(timeIntervalSince1970: 200),
+            targetName: "middle",
+            status: .succeeded,
+            localFileNames: ["middle.png"],
+            remoteDisplayPaths: ["~/.agent-inbox/2026-06-29/middle.png"],
+            errorMessage: nil
+        )
+        let running = UploadHistoryEntry.uploadStarted(
+            id: UUID(),
+            targetName: "newest",
+            fileURLs: [URL(fileURLWithPath: "/tmp/demo.png")],
+            createdAt: Date(timeIntervalSince1970: 300)
+        )
+        let completed = UploadHistoryEntry.succeeded(
+            targetName: "newest",
+            uploadedFiles: [
+                UploadedFile(
+                    localURL: URL(fileURLWithPath: "/tmp/demo.png"),
+                    remoteDisplayPath: "~/.agent-inbox/2026-06-29/demo.png"
+                )
+            ],
+            createdAt: Date(timeIntervalSince1970: 300),
+            id: running.id
+        )
+
+        try store.append(oldest)
+        try store.append(middle)
+        try store.upsert(running)
+        try store.upsert(completed)
+
+        XCTAssertEqual(try store.load().map(\.targetName), ["newest", "middle"])
+        XCTAssertEqual(try store.load().map(\.status), [.succeeded, .succeeded])
+    }
+
     func testConcurrentAppendsOnOneStorePreserveAllEntriesNewestFirst() throws {
         let root = try temporaryDirectory()
         let entryCount = 200

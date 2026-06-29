@@ -55,6 +55,20 @@ public final class UploadHistoryStore: @unchecked Sendable {
         }
     }
 
+    public func upsert(_ entry: UploadHistoryEntry) throws {
+        try coordinator.sync {
+            try withProcessLock {
+                var entries = try loadUnlocked()
+                if let index = entries.firstIndex(where: { $0.id == entry.id }) {
+                    entries[index] = entry
+                } else {
+                    entries.insert(entry, at: 0)
+                }
+                try write(sortedAndTrimmed(entries))
+            }
+        }
+    }
+
     private static func coordinator(for historyFileURL: URL) -> DispatchQueue {
         let path = canonicalQueueKey(for: historyFileURL)
         return coordinatorRegistry.queue(forPath: path)
