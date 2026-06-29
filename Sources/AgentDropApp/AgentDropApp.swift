@@ -243,44 +243,24 @@ private struct TransferWindowView: View {
     }
 
     private func syncFinderUploadStatus(from entries: [UploadHistoryEntry], now: Date = Date()) {
-        if let runningSummary = TransferStatusSummary.runningUploadHistoryStatus(from: entries, now: now),
-           let runningEntry = entries
-            .filter({ $0.direction == .upload && $0.status == .running })
-            .sorted(by: { $0.createdAt > $1.createdAt })
-            .first(where: { now.timeIntervalSince($0.createdAt) <= TransferStatusSummary.defaultRunningHistoryStaleInterval }) {
-            guard isShowingFinderUploadStatus || transferStatusSummary == .idle else {
-                return
-            }
-            activeFinderUploadID = runningEntry.id
-            isShowingFinderUploadStatus = true
-            transferStatusSummary = runningSummary
-            scheduleFinderStatusStaleRefresh(for: runningEntry, now: now)
+        let resolution = FinderUploadStatusResolver.resolve(
+            entries: entries,
+            currentStatus: transferStatusSummary,
+            activeUploadID: activeFinderUploadID,
+            isShowingFinderUploadStatus: isShowingFinderUploadStatus,
+            now: now
+        )
+
+        activeFinderUploadID = resolution.activeUploadID
+        isShowingFinderUploadStatus = resolution.isShowingFinderUploadStatus
+        transferStatusSummary = resolution.transferStatusSummary
+
+        if let staleRefreshEntry = resolution.staleRefreshEntry {
+            scheduleFinderStatusStaleRefresh(for: staleRefreshEntry, now: now)
             return
         }
 
-        guard isShowingFinderUploadStatus else {
-            return
-        }
-
-        if let activeFinderUploadID,
-           let completedEntry = entries.first(where: { $0.id == activeFinderUploadID }) {
-            switch completedEntry.status {
-            case .succeeded:
-                let fileCount = completedEntry.localFileNames.count
-                let noun = fileCount == 1 ? "file" : "files"
-                transferStatusSummary = .success("Uploaded \(fileCount) \(noun) to \(completedEntry.targetName).")
-            case .failed:
-                transferStatusSummary = .failure(
-                    completedEntry.errorMessage ?? "Upload to \(completedEntry.targetName) failed."
-                )
-            case .running:
-                transferStatusSummary = .idle
-            }
-        } else {
-            transferStatusSummary = .idle
-        }
-
-        clearFinderUploadStatusOwnership()
+        invalidateFinderStatusStaleTimer()
     }
 
     private func scheduleFinderStatusStaleRefresh(for entry: UploadHistoryEntry, now: Date) {
