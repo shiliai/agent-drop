@@ -7,6 +7,7 @@ public enum TransferDirection: String, Codable, Equatable, Sendable {
 
 public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     public enum Status: String, Codable, Equatable, Sendable {
+        case running
         case succeeded
         case failed
     }
@@ -106,6 +107,25 @@ public extension JSONDecoder {
 }
 
 public extension UploadHistoryEntry {
+    static func uploadStarted(
+        id: UUID = UUID(),
+        targetName: String,
+        fileURLs: [URL],
+        createdAt: Date = Date()
+    ) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id,
+            createdAt: createdAt,
+            direction: .upload,
+            targetName: targetName,
+            status: .running,
+            localFileNames: fileURLs.map(\.lastPathComponent),
+            remoteDisplayPaths: [],
+            localDisplayPaths: [],
+            errorMessage: nil
+        )
+    }
+
     static func succeeded(
         targetName: String,
         uploadedFiles: [UploadedFile],
