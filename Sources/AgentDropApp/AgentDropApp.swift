@@ -21,11 +21,19 @@ private struct TransferWindowView: View {
     @Binding var selectedRoute: AgentDropRoute?
 
     @State private var navigation = TransferNavigationState()
-    @State private var historyRefreshToken = UUID()
     @State private var historyWatcher: UploadHistoryFileWatcher?
     @State private var isAutoRefreshEnabled = false
     @State private var lastUpdatedAt: Date?
     @State private var transferStatusSummary = TransferStatusSummary.idle
+    @State private var targets: [SSHTarget] = []
+    @State private var doctorReport = Doctor().run()
+    @State private var historyEntries: [UploadHistoryEntry] = []
+    @State private var selectedHistoryID: UploadHistoryEntry.ID?
+    @State private var historyLoadErrorMessage: String?
+    @State private var historyStatusMessage: String?
+    @State private var activeHistoryLoadID: UUID?
+
+    private let historyStore = AsyncUploadHistoryStore()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -34,18 +42,26 @@ private struct TransferWindowView: View {
 
                 Divider()
 
+                contextColumn
+
+                Divider()
+
                 Group {
                     switch navigation.selectedSection {
                     case .transfer:
                         TransferWorkspaceView(
                             navigation: $navigation,
+                            targets: targets,
+                            doctorReport: doctorReport,
                             transferStatusSummary: $transferStatusSummary,
                             onHistoryRecorded: refreshHistory
                         )
                     case .history:
-                        WorkspaceContent(title: "History") {
-                            UploadHistoryView(refreshToken: historyRefreshToken)
-                        }
+                        UploadHistoryView(
+                            selectedEntry: selectedHistoryEntry,
+                            loadErrorMessage: historyLoadErrorMessage,
+                            statusMessage: $historyStatusMessage
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -66,6 +82,9 @@ private struct TransferWindowView: View {
         .onChange(of: selectedRoute) { _, route in
             apply(route)
         }
+        .onChange(of: selectedHistoryID) { _, _ in
+            historyStatusMessage = nil
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 refreshHistory()
@@ -77,6 +96,7 @@ private struct TransferWindowView: View {
         .onAppear {
             refreshHistory()
             startHistoryWatcher()
+            loadTargets(applyClipboardPrefill: true)
             apply(selectedRoute)
         }
         .onDisappear {
@@ -109,15 +129,100 @@ private struct TransferWindowView: View {
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
+    @ViewBuilder
+    private var contextColumn: some View {
+        switch navigation.selectedSection {
+        case .transfer:
+            HostListView(
+                targets: targets,
+                selectedTargetID: $navigation.selectedTargetID,
+                onRefresh: {
+                    loadTargets(applyClipboardPrefill: false)
+                }
+            )
+        case .history:
+            UploadHistoryListView(
+                entries: historyEntries,
+                selectedID: $selectedHistoryID,
+                loadErrorMessage: historyLoadErrorMessage,
+                onRefresh: refreshHistory
+            )
+        }
+    }
+
+    private var selectedHistoryEntry: UploadHistoryEntry? {
+        historyEntries.first { $0.id == selectedHistoryID } ?? historyEntries.first
+    }
+
     private func apply(_ route: AgentDropRoute?) {
-        guard route != nil else { return }
+        guard let route else { return }
+
+        if route.requiresTargetRefresh {
+            loadTargets(applyClipboardPrefill: true)
+        }
+
         navigation.apply(route)
         selectedRoute = nil
     }
 
     private func refreshHistory() {
-        historyRefreshToken = UUID()
         lastUpdatedAt = Date()
+        loadHistory()
+    }
+
+    private func loadTargets(applyClipboardPrefill: Bool) {
+        doctorReport = Doctor().run()
+        let discoveredTargets = discoverTargets()
+        targets = discoveredTargets
+        navigation.reconcileTargets(discoveredTargets)
+
+        if applyClipboardPrefill {
+            prefillFromClipboard(targets: discoveredTargets)
+        }
+    }
+
+    private func prefillFromClipboard(targets: [SSHTarget]) {
+        let clipboardText = NSPasteboard.general.string(forType: .string)
+        guard let prefill = PullFormPrefill.evaluate(clipboardText: clipboardText, targets: targets) else {
+            return
+        }
+
+        if let selectedTargetID = prefill.selectedTargetID {
+            navigation.selectedTargetID = selectedTargetID
+        }
+    }
+
+    private func loadHistory() {
+        let loadID = UUID()
+        activeHistoryLoadID = loadID
+
+        Task {
+            let result: Result<[UploadHistoryEntry], Error>
+            do {
+                result = .success(try await historyStore.load())
+            } catch {
+                result = .failure(error)
+            }
+
+            await MainActor.run {
+                guard activeHistoryLoadID == loadID else { return }
+
+                switch result {
+                case let .success(loadedEntries):
+                    historyEntries = loadedEntries
+                    historyLoadErrorMessage = nil
+                    if selectedHistoryID == nil || !loadedEntries.contains(where: { $0.id == selectedHistoryID }) {
+                        selectedHistoryID = loadedEntries.first?.id
+                    }
+                    historyStatusMessage = nil
+                case .failure:
+                    historyEntries = []
+                    selectedHistoryID = nil
+                    historyLoadErrorMessage = "Could not read transfer history."
+                    historyStatusMessage = nil
+                }
+            }
+        }
     }
 
     private func startHistoryWatcher() {
@@ -166,37 +271,32 @@ private struct AppNavigationButton: View {
 
 private struct TransferWorkspaceView: View {
     @Binding var navigation: TransferNavigationState
+    let targets: [SSHTarget]
+    let doctorReport: DoctorReport
     @Binding var transferStatusSummary: TransferStatusSummary
     let onHistoryRecorded: () -> Void
 
-    @State private var targets: [SSHTarget] = []
     @State private var remotePathText = ""
-    @State private var doctorReport = Doctor().run()
     @State private var didInitialLoad = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            HostListView(
-                targets: targets,
-                selectedTargetID: $navigation.selectedTargetID,
-                onRefresh: {
-                    loadTargets(applyClipboardPrefill: false)
-                }
-            )
-
-            Divider()
-
-            WorkspaceContent(title: "Transfer", accessory: { transferModePicker }) {
-                currentTransferPane
-            }
+        WorkspaceContent(title: "Transfer", accessory: { transferModePicker }) {
+            currentTransferPane
         }
         .onAppear {
             guard !didInitialLoad else { return }
             didInitialLoad = true
-            loadTargets(applyClipboardPrefill: true)
+            if remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prefillFromClipboard(targets: targets)
+            }
         }
         .onChange(of: navigation.transferMode) { _, mode in
             if mode == .pull, remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prefillFromClipboard(targets: targets)
+            }
+        }
+        .onChange(of: targets) { _, targets in
+            if navigation.transferMode == .pull, remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 prefillFromClipboard(targets: targets)
             }
         }
@@ -242,17 +342,6 @@ private struct TransferWorkspaceView: View {
         }
     }
 
-    private func loadTargets(applyClipboardPrefill: Bool) {
-        doctorReport = Doctor().run()
-        let discoveredTargets = discoverTargets()
-        targets = discoveredTargets
-        navigation.reconcileTargets(discoveredTargets)
-
-        if applyClipboardPrefill {
-            prefillFromClipboard(targets: discoveredTargets)
-        }
-    }
-
     private func prefillFromClipboard(targets: [SSHTarget]) {
         let clipboardText = NSPasteboard.general.string(forType: .string)
         guard let prefill = PullFormPrefill.evaluate(clipboardText: clipboardText, targets: targets) else {
@@ -269,16 +358,6 @@ private struct TransferWorkspaceView: View {
         DependencyFeedback.missingFeedback(in: doctorReport, for: requirement)
     }
 
-    private func discoverTargets() -> [SSHTarget] {
-        let runner = ProcessCommandRunner()
-        let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
-        let configured = SSHConfigParser().parse(configText)
-
-        let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
-        let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
-
-        return TargetResolver.merge(active: active, configured: configured)
-    }
 }
 
 private struct WorkspaceContent<Accessory: View, Content: View>: View {
@@ -1229,117 +1308,89 @@ private enum PullStatus: Equatable {
     case failure(String)
 }
 
-private struct UploadHistoryView: View {
-    let refreshToken: UUID
-
-    @State private var entries: [UploadHistoryEntry] = []
-    @State private var selectedID: UploadHistoryEntry.ID?
-    @State private var loadErrorMessage: String?
-    @State private var statusMessage: String?
-    @State private var activeHistoryLoadID: UUID?
-
-    private let store = AsyncUploadHistoryStore()
-
-    var selectedEntry: UploadHistoryEntry? {
-        entries.first { $0.id == selectedID } ?? entries.first
-    }
+private struct UploadHistoryListView: View {
+    let entries: [UploadHistoryEntry]
+    @Binding var selectedID: UploadHistoryEntry.ID?
+    let loadErrorMessage: String?
+    let onRefresh: () -> Void
 
     var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Recent Transfers")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Button {
-                        loadHistory()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(AppSection.history.contextColumnTitle)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
 
-                if let loadErrorMessage, entries.isEmpty {
-                    ContentUnavailableView(
-                        "History unavailable",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(loadErrorMessage)
-                    )
-                } else if entries.isEmpty {
-                    ContentUnavailableView(
-                        "No transfers yet",
-                        systemImage: "tray",
-                        description: Text("Right-click a file in Finder to upload, or use Pull from... to download remote paths.")
-                    )
-                } else {
-                    List(selection: $selectedID) {
-                        ForEach(entries) { entry in
-                            UploadHistoryRow(entry: entry)
-                                .tag(entry.id)
-                        }
-                    }
-                    .listStyle(.sidebar)
-                }
+                Spacer()
 
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh history")
+                .accessibilityLabel("Refresh history")
             }
-            .padding()
-            .frame(minWidth: 300)
-        } detail: {
-            if let selectedEntry {
-                UploadHistoryDetail(entry: selectedEntry, statusMessage: $statusMessage)
-            } else if let loadErrorMessage {
+
+            if let loadErrorMessage, entries.isEmpty {
                 ContentUnavailableView(
                     "History unavailable",
                     systemImage: "exclamationmark.triangle",
                     description: Text(loadErrorMessage)
                 )
-            } else {
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if entries.isEmpty {
                 ContentUnavailableView(
-                    "Select a transfer",
-                    systemImage: "doc.text.magnifyingglass",
-                    description: Text("Transfer details and copyable paths will appear here.")
+                    "No Transfers",
+                    systemImage: "tray",
+                    description: Text("Drop or pull paths to build history.")
                 )
-            }
-        }
-        .onAppear {
-            loadHistory()
-        }
-        .onChange(of: selectedID) { _, _ in
-            statusMessage = nil
-        }
-        .onChange(of: refreshToken) { _, _ in
-            loadHistory()
-        }
-    }
-
-    private func loadHistory() {
-        let loadID = UUID()
-        activeHistoryLoadID = loadID
-
-        Task {
-            let result: Result<[UploadHistoryEntry], Error>
-            do {
-                result = .success(try await store.load())
-            } catch {
-                result = .failure(error)
-            }
-
-            await MainActor.run {
-                guard activeHistoryLoadID == loadID else { return }
-
-                switch result {
-                case let .success(loadedEntries):
-                    entries = loadedEntries
-                    loadErrorMessage = nil
-                    if selectedID == nil || !loadedEntries.contains(where: { $0.id == selectedID }) {
-                        selectedID = loadedEntries.first?.id
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $selectedID) {
+                    ForEach(entries) { entry in
+                        UploadHistoryRow(entry: entry)
+                            .tag(UploadHistoryEntry.ID?.some(entry.id))
                     }
-                    statusMessage = nil
-                case .failure:
-                    entries = []
-                    selectedID = nil
-                    loadErrorMessage = "Could not read transfer history."
-                    statusMessage = nil
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .padding(12)
+        .frame(width: 230)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct UploadHistoryView: View {
+    let selectedEntry: UploadHistoryEntry?
+    let loadErrorMessage: String?
+    @Binding var statusMessage: String?
+
+    var body: some View {
+        WorkspaceContent(title: "History") {
+            Group {
+                if let selectedEntry {
+                    UploadHistoryDetail(entry: selectedEntry, statusMessage: $statusMessage)
+                } else if let loadErrorMessage {
+                    ContentUnavailableView(
+                        "History unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(loadErrorMessage)
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView(
+                        "Select a transfer",
+                        systemImage: "doc.text.magnifyingglass",
+                        description: Text("Transfer details and copyable paths will appear here.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }

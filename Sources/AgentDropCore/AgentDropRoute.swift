@@ -6,6 +6,13 @@ public enum AgentDropRoute: Equatable {
     public static let scheme = "agentdrop"
     public static let pullURL = URL(string: "\(scheme)://pull")!
 
+    public var requiresTargetRefresh: Bool {
+        switch self {
+        case .pull:
+            return true
+        }
+    }
+
     public init?(url: URL) {
         guard url.scheme?.lowercased() == Self.scheme else {
             return nil

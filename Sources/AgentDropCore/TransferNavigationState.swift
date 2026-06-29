@@ -3,6 +3,15 @@ import Foundation
 public enum AppSection: String, Equatable, Sendable {
     case transfer
     case history
+
+    public var contextColumnTitle: String {
+        switch self {
+        case .transfer:
+            return "Hosts"
+        case .history:
+            return "Recent Transfers"
+        }
+    }
 }
 
 public enum TransferMode: String, Equatable, Sendable {
