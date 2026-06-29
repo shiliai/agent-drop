@@ -53,7 +53,7 @@ Agent Drop 也可以把已知的远程文件或文件夹拉回 Mac。使用
 - 把最终远程路径复制到 Mac 剪贴板，路径包含文件名或文件夹名。
 - pull 成功后，把最终本地路径复制到 Mac 剪贴板。
 - 在 Finder 上传和 App pull 前检查本地依赖，缺失时给出反馈，但不会自动安装。
-- 在 App 里显示最近上传历史、成功/失败状态、最后刷新时间和版本号。
+- 在 App 里显示传输历史、Finder 上传实时进度、最后刷新时间和版本号/build。
 
 文件夹上传会在远端保留同名目录，并把选中文件夹里的内容同步到这个远程目录里。
 
@@ -103,6 +103,10 @@ pull 工作流设计记录在：
 Transfer 导航设计记录在：
 
 [docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md](docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md)
+
+Finder 上传实时状态设计记录在：
+
+[docs/superpowers/specs/2026-06-29-agent-drop-finder-upload-live-status-design.md](docs/superpowers/specs/2026-06-29-agent-drop-finder-upload-live-status-design.md)
 
 ## 开发
 
@@ -186,6 +190,8 @@ Agent Drop 使用 UTC `YYYY-MM-DD` 作为上传日期目录。
   `Transfer` 区域，并切到 Pull 模式。
 - 根菜单项带一个小的 template upload 图标。
 - 上传成功或失败后，Finder 会短暂给选中的文件加 badge。
+- Finder 上传过程中，扩展会写入一条实时历史记录；App 无论停在哪个区域，
+  全局状态栏都可以显示当前上传状态。
 - 扩展诊断日志写入：
   `~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log`。
 - Finder Sync 发出的 macOS 通知是 best-effort。App 里的 `History` 区域才是可靠的反馈和历史记录界面。
@@ -196,7 +202,7 @@ Agent Drop 会把最近的上传和下载记录写到 Finder 扩展容器里：
 
     ~/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Application Support/Agent Drop/upload-history.json
 
-App 会读取这个文件并显示 `History`。选择成功的上传记录后，可以再次复制远程路径；选择成功的下载记录后，可以再次复制本地路径。失败记录会显示短错误信息，且没有可复制 payload。窗口底部状态栏会显示刷新状态点、最后刷新时间，以及 App 版本号/build。JSON 文件名为了兼容旧版本仍保留为 `upload-history.json`，但现在会存储两个传输方向。
+App 会读取这个文件并显示 `History`。选择成功的上传记录后，可以再次复制远程路径；选择成功的下载记录后，可以再次复制本地路径。失败记录会显示短错误信息，且没有可复制 payload。Finder 上传会先显示为 `Uploading` 记录，然后原地更新为成功或失败；如果 App 发现很久没有完成的旧上传，会把这条记录显示为状态未知，而不是让状态栏一直保持上传中。窗口底部状态栏会显示刷新状态点、最后刷新时间，以及 App 版本号/build。JSON 文件名为了兼容旧版本仍保留为 `upload-history.json`，但现在会存储两个传输方向。
 
 当前 developer build 路径下，主 App 有意保持 unsandboxed，这样它可以读取 Finder 扩展的历史文件，而不需要 Apple Developer Program App Group。以后如果做签名和 notarized release，可以迁移到 App Group container。
 
@@ -217,7 +223,7 @@ ssh x570 'd="$HOME/.agent-inbox/$(date +%F)"; ls -l "$d"/agent-drop-ui-test*; wc
 tail -n 80 "$HOME/Library/Containers/ai.shili.AgentDrop.FinderSync/Data/Library/Logs/AgentDropFinderSync.log"
 ```
 
-预期结果：`pbpaste` 包含最终远程路径，远程文件或文件夹存在，文件夹上传保留内容，诊断日志记录 `upload success`。
+预期结果：`pbpaste` 包含最终远程路径，远程文件或文件夹存在，文件夹上传保留内容，诊断日志记录 `upload success`。如果上传时 `Agent Drop.app` 已打开，全局状态栏会在任意区域显示当前上传状态，`History` 会显示一条 `Uploading` 记录，并在结束后更新为成功或失败。
 
 Finder 上传后，确认历史文件已写入：
 

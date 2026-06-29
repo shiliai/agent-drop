@@ -56,6 +56,8 @@ Transfer window with shared Hosts, Drop/Pull modes, and the global status bar:
 - Copy final local paths after successful pulls.
 - Check required local tools before Finder uploads and app pulls, then show
   setup feedback without installing dependencies automatically.
+- Show transfer history, live Finder upload progress, last refresh time, and
+  the app version/build in the app.
 
 ## CLI Usage
 
@@ -105,6 +107,10 @@ The pull workflow design is documented in:
 The transfer navigation design is documented in:
 
 [docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md](docs/superpowers/specs/2026-06-27-agent-drop-transfer-navigation-design.md)
+
+The Finder upload live status design is documented in:
+
+[docs/superpowers/specs/2026-06-29-agent-drop-finder-upload-live-status-design.md](docs/superpowers/specs/2026-06-29-agent-drop-finder-upload-live-status-design.md)
 
 ## Development
 
