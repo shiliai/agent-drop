@@ -28,6 +28,11 @@ final class TransferNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.transferMode, .pull)
     }
 
+    func testSectionsDeclareStableContextColumnTitles() {
+        XCTAssertEqual(AppSection.transfer.contextColumnTitle, "Hosts")
+        XCTAssertEqual(AppSection.history.contextColumnTitle, "Recent Transfers")
+    }
+
     func testSelectedTargetPersistsAcrossDirectionChanges() {
         var state = TransferNavigationState(selectedTargetID: "devbox")
 

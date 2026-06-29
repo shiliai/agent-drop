@@ -1,6 +1,6 @@
 import Foundation
 
-public struct UploadedFile: Equatable {
+public struct UploadedFile: Equatable, Sendable {
     public let localURL: URL
     public let remoteDisplayPath: String
     public let localDisplayName: String
@@ -12,7 +12,7 @@ public struct UploadedFile: Equatable {
     }
 }
 
-public struct UploadSourceFile: Equatable {
+public struct UploadSourceFile: Equatable, Sendable {
     public let sourceURL: URL
     public let remoteName: String
     public let localDisplayName: String

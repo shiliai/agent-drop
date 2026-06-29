@@ -16,12 +16,15 @@ public struct DoctorReport: Equatable {
 
 public enum DependencyRequirement {
     case finderUpload
+    case appDrop
     case appPull
 
     public var requiredToolNames: [String] {
         switch self {
         case .finderUpload:
             return ["ssh", "rsync"]
+        case .appDrop:
+            return ["ssh", "rsync", "pbcopy"]
         case .appPull:
             return ["ssh", "rsync", "tar", "pbcopy"]
         }

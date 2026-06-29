@@ -14,6 +14,10 @@ final class AgentDropRouteTests: XCTestCase {
         XCTAssertEqual(route, .pull)
     }
 
+    func testPullRouteRequiresTargetRefresh() {
+        XCTAssertTrue(AgentDropRoute.pull.requiresTargetRefresh)
+    }
+
     func testRejectsUnknownCustomSchemeRoute() {
         let route = AgentDropRoute(url: URL(string: "agentdrop://history")!)
 

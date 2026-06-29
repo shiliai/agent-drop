@@ -21,10 +21,19 @@ private struct TransferWindowView: View {
     @Binding var selectedRoute: AgentDropRoute?
 
     @State private var navigation = TransferNavigationState()
-    @State private var historyRefreshToken = UUID()
     @State private var historyWatcher: UploadHistoryFileWatcher?
     @State private var isAutoRefreshEnabled = false
     @State private var lastUpdatedAt: Date?
+    @State private var transferStatusSummary = TransferStatusSummary.idle
+    @State private var targets: [SSHTarget] = []
+    @State private var doctorReport = Doctor().run()
+    @State private var historyEntries: [UploadHistoryEntry] = []
+    @State private var selectedHistoryID: UploadHistoryEntry.ID?
+    @State private var historyLoadErrorMessage: String?
+    @State private var historyStatusMessage: String?
+    @State private var activeHistoryLoadID: UUID?
+
+    private let historyStore = AsyncUploadHistoryStore()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,15 +42,26 @@ private struct TransferWindowView: View {
 
                 Divider()
 
+                contextColumn
+
+                Divider()
+
                 Group {
                     switch navigation.selectedSection {
                     case .transfer:
                         TransferWorkspaceView(
                             navigation: $navigation,
+                            targets: targets,
+                            doctorReport: doctorReport,
+                            transferStatusSummary: $transferStatusSummary,
                             onHistoryRecorded: refreshHistory
                         )
                     case .history:
-                        UploadHistoryView(refreshToken: historyRefreshToken)
+                        UploadHistoryView(
+                            selectedEntry: selectedHistoryEntry,
+                            loadErrorMessage: historyLoadErrorMessage,
+                            statusMessage: $historyStatusMessage
+                        )
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -52,6 +72,7 @@ private struct TransferWindowView: View {
             UploadHistoryStatusBar(
                 isAutoRefreshEnabled: isAutoRefreshEnabled,
                 lastUpdatedAt: lastUpdatedAt,
+                transferStatusSummary: transferStatusSummary,
                 versionDisplay: AgentDropVersion.display
             )
             .padding(.horizontal, 12)
@@ -60,6 +81,9 @@ private struct TransferWindowView: View {
         .frame(minWidth: 920, minHeight: 560)
         .onChange(of: selectedRoute) { _, route in
             apply(route)
+        }
+        .onChange(of: selectedHistoryID) { _, _ in
+            historyStatusMessage = nil
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
@@ -72,6 +96,7 @@ private struct TransferWindowView: View {
         .onAppear {
             refreshHistory()
             startHistoryWatcher()
+            loadTargets(applyClipboardPrefill: true)
             apply(selectedRoute)
         }
         .onDisappear {
@@ -104,15 +129,100 @@ private struct TransferWindowView: View {
         .frame(maxHeight: .infinity, alignment: .topLeading)
     }
 
+    @ViewBuilder
+    private var contextColumn: some View {
+        switch navigation.selectedSection {
+        case .transfer:
+            HostListView(
+                targets: targets,
+                selectedTargetID: $navigation.selectedTargetID,
+                onRefresh: {
+                    loadTargets(applyClipboardPrefill: false)
+                }
+            )
+        case .history:
+            UploadHistoryListView(
+                entries: historyEntries,
+                selectedID: $selectedHistoryID,
+                loadErrorMessage: historyLoadErrorMessage,
+                onRefresh: refreshHistory
+            )
+        }
+    }
+
+    private var selectedHistoryEntry: UploadHistoryEntry? {
+        historyEntries.first { $0.id == selectedHistoryID } ?? historyEntries.first
+    }
+
     private func apply(_ route: AgentDropRoute?) {
-        guard route != nil else { return }
+        guard let route else { return }
+
+        if route.requiresTargetRefresh {
+            loadTargets(applyClipboardPrefill: true)
+        }
+
         navigation.apply(route)
         selectedRoute = nil
     }
 
     private func refreshHistory() {
-        historyRefreshToken = UUID()
         lastUpdatedAt = Date()
+        loadHistory()
+    }
+
+    private func loadTargets(applyClipboardPrefill: Bool) {
+        doctorReport = Doctor().run()
+        let discoveredTargets = discoverTargets()
+        targets = discoveredTargets
+        navigation.reconcileTargets(discoveredTargets)
+
+        if applyClipboardPrefill {
+            prefillFromClipboard(targets: discoveredTargets)
+        }
+    }
+
+    private func prefillFromClipboard(targets: [SSHTarget]) {
+        let clipboardText = NSPasteboard.general.string(forType: .string)
+        guard let prefill = PullFormPrefill.evaluate(clipboardText: clipboardText, targets: targets) else {
+            return
+        }
+
+        if let selectedTargetID = prefill.selectedTargetID {
+            navigation.selectedTargetID = selectedTargetID
+        }
+    }
+
+    private func loadHistory() {
+        let loadID = UUID()
+        activeHistoryLoadID = loadID
+
+        Task {
+            let result: Result<[UploadHistoryEntry], Error>
+            do {
+                result = .success(try await historyStore.load())
+            } catch {
+                result = .failure(error)
+            }
+
+            await MainActor.run {
+                guard activeHistoryLoadID == loadID else { return }
+
+                switch result {
+                case let .success(loadedEntries):
+                    historyEntries = loadedEntries
+                    historyLoadErrorMessage = nil
+                    if selectedHistoryID == nil || !loadedEntries.contains(where: { $0.id == selectedHistoryID }) {
+                        selectedHistoryID = loadedEntries.first?.id
+                    }
+                    historyStatusMessage = nil
+                case .failure:
+                    historyEntries = []
+                    selectedHistoryID = nil
+                    historyLoadErrorMessage = "Could not read transfer history."
+                    historyStatusMessage = nil
+                }
+            }
+        }
     }
 
     private func startHistoryWatcher() {
@@ -161,73 +271,32 @@ private struct AppNavigationButton: View {
 
 private struct TransferWorkspaceView: View {
     @Binding var navigation: TransferNavigationState
+    let targets: [SSHTarget]
+    let doctorReport: DoctorReport
+    @Binding var transferStatusSummary: TransferStatusSummary
     let onHistoryRecorded: () -> Void
 
-    @State private var targets: [SSHTarget] = []
     @State private var remotePathText = ""
-    @State private var doctorReport = Doctor().run()
     @State private var didInitialLoad = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            HostListView(
-                targets: targets,
-                selectedTargetID: $navigation.selectedTargetID,
-                onRefresh: {
-                    loadTargets(applyClipboardPrefill: false)
-                }
-            )
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center) {
-                    Text("Transfer")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-
-                    Spacer()
-
-                    Picker("Transfer Mode", selection: $navigation.transferMode) {
-                        Text("Drop").tag(TransferMode.drop)
-                        Text("Pull from...").tag(TransferMode.pull)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 220)
-                }
-
-                switch navigation.transferMode {
-                case .drop:
-                    DropLandingView(
-                        selectedTarget: selectedTarget,
-                        dependencyFeedback: dependencyFeedback(for: .finderUpload),
-                        onSwitchToPull: {
-                            navigation.transferMode = .pull
-                        }
-                    )
-                case .pull:
-                    PullFormView(
-                        targets: targets,
-                        selectedTargetID: $navigation.selectedTargetID,
-                        remotePathText: $remotePathText,
-                        dependencyFeedback: dependencyFeedback(for: .appPull),
-                        dependencyFeedbackProvider: DependencyFeedbackProvider(),
-                        onHistoryRecorded: onHistoryRecorded
-                    )
-                }
-            }
-            .padding(24)
-            .background(Color(nsColor: .textBackgroundColor))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        WorkspaceContent(title: "Transfer", accessory: { transferModePicker }) {
+            currentTransferPane
         }
         .onAppear {
             guard !didInitialLoad else { return }
             didInitialLoad = true
-            loadTargets(applyClipboardPrefill: true)
+            if remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prefillFromClipboard(targets: targets)
+            }
         }
         .onChange(of: navigation.transferMode) { _, mode in
             if mode == .pull, remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                prefillFromClipboard(targets: targets)
+            }
+        }
+        .onChange(of: targets) { _, targets in
+            if navigation.transferMode == .pull, remotePathText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 prefillFromClipboard(targets: targets)
             }
         }
@@ -238,14 +307,38 @@ private struct TransferWorkspaceView: View {
         return targets.first { $0.id == selectedTargetID }
     }
 
-    private func loadTargets(applyClipboardPrefill: Bool) {
-        doctorReport = Doctor().run()
-        let discoveredTargets = discoverTargets()
-        targets = discoveredTargets
-        navigation.reconcileTargets(discoveredTargets)
+    private var transferModePicker: some View {
+        Picker("Transfer Mode", selection: $navigation.transferMode) {
+            Text("Drop").tag(TransferMode.drop)
+            Text("Pull from...").tag(TransferMode.pull)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 220)
+    }
 
-        if applyClipboardPrefill {
-            prefillFromClipboard(targets: discoveredTargets)
+    @ViewBuilder
+    private var currentTransferPane: some View {
+        switch navigation.transferMode {
+        case .drop:
+            DropLandingView(
+                selectedTarget: selectedTarget,
+                dependencyFeedback: dependencyFeedback(for: .appDrop),
+                transferStatusSummary: $transferStatusSummary,
+                onSwitchToPull: {
+                    navigation.transferMode = .pull
+                },
+                onHistoryRecorded: onHistoryRecorded
+            )
+        case .pull:
+            PullFormView(
+                targets: targets,
+                selectedTargetID: $navigation.selectedTargetID,
+                remotePathText: $remotePathText,
+                dependencyFeedback: dependencyFeedback(for: .appPull),
+                dependencyFeedbackProvider: DependencyFeedbackProvider(),
+                onHistoryRecorded: onHistoryRecorded
+            )
         }
     }
 
@@ -265,15 +358,50 @@ private struct TransferWorkspaceView: View {
         DependencyFeedback.missingFeedback(in: doctorReport, for: requirement)
     }
 
-    private func discoverTargets() -> [SSHTarget] {
-        let runner = ProcessCommandRunner()
-        let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
-        let configured = SSHConfigParser().parse(configText)
+}
 
-        let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
-        let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
+private struct WorkspaceContent<Accessory: View, Content: View>: View {
+    let title: String
+    let accessory: Accessory
+    let content: Content
 
-        return TargetResolver.merge(active: active, configured: configured)
+    init(
+        title: String,
+        @ViewBuilder accessory: () -> Accessory,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.title = title
+        self.accessory = accessory()
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Text(title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Spacer()
+
+                accessory
+            }
+
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .padding(24)
+        .background(Color(nsColor: .textBackgroundColor))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private extension WorkspaceContent where Accessory == EmptyView {
+    init(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.init(title: title, accessory: EmptyView.init, content: content)
     }
 }
 
@@ -358,12 +486,45 @@ private struct HostRow: View {
 }
 
 private struct DropLandingView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     let selectedTarget: SSHTarget?
     let dependencyFeedback: DependencyFeedback?
+    @Binding var transferStatusSummary: TransferStatusSummary
+    let dependencyFeedbackProvider = DependencyFeedbackProvider()
     let onSwitchToPull: () -> Void
+    let onHistoryRecorded: () -> Void
+
+    @State private var clipboardSnapshot = AppClipboardSnapshot.empty
+    @State private var clipboardResolution = ClipboardDropResolution.empty
+    @State private var status = ClipboardDropStatus.idle
+    @State private var isDroppingClipboard = false
+    @State private var activeClipboardOperationID: UUID?
+
+    private let historyStore = AsyncUploadHistoryStore()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        ScrollView {
+            content
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.trailing, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            refreshClipboard(preservingStatus: true)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                refreshClipboard(preservingStatus: true)
+            }
+        }
+        .onChange(of: selectedTarget?.id) { _, _ in
+            clearStatusWhenReady()
+        }
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.title3)
@@ -379,12 +540,25 @@ private struct DropLandingView: View {
                     .textSelection(.enabled)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Finder workflow")
-                    .font(.headline)
-                Text("Select files or folders in Finder, right-click, choose Agent Drop, then pick the selected host.")
-                    .foregroundStyle(.secondary)
-            }
+            workflowCards
+                .frame(maxWidth: 760, alignment: .leading)
+
+            statusView
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var finderWorkflowCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Finder workflow", systemImage: "folder")
+                .font(.headline)
+
+            Text("Select files or folders in Finder, right-click, choose Agent Drop, then pick the selected host.")
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
 
             HStack(spacing: 10) {
                 Button {
@@ -398,10 +572,122 @@ private struct DropLandingView: View {
                     Label("Pull instead", systemImage: "arrow.down.circle")
                 }
             }
-
-            Spacer()
         }
-        .frame(maxWidth: 620, maxHeight: .infinity, alignment: .topLeading)
+        .padding(18)
+        .frame(minWidth: 320, maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.55))
+        }
+    }
+
+    private var clipboardCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Label("Clipboard", systemImage: "doc.on.clipboard")
+                    .font(.headline)
+
+                Spacer()
+
+                Button {
+                    startClipboardDrop()
+                } label: {
+                    if isDroppingClipboard {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Label("Drop Clipboard", systemImage: "paperplane")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(!canDropClipboard)
+                .help(dropClipboardHelp)
+                .accessibilityLabel("Drop Clipboard")
+
+                Button {
+                    refreshClipboard(preservingStatus: false)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh clipboard")
+                .accessibilityLabel("Refresh clipboard")
+                .disabled(isDroppingClipboard)
+            }
+
+            Label(clipboardMessage, systemImage: clipboardSystemImage)
+                .foregroundStyle(clipboardForegroundStyle)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .frame(minWidth: 320, maxWidth: .infinity, minHeight: 210, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor).opacity(0.55))
+        }
+    }
+
+    @ViewBuilder
+    private var workflowCards: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 16) {
+                finderWorkflowCard
+                clipboardCard
+            }
+
+            VStack(alignment: .leading, spacing: 16) {
+                finderWorkflowCard
+                clipboardCard
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch status {
+        case .idle:
+            EmptyView()
+        case let .progress(message):
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(message)
+                    .foregroundStyle(.secondary)
+            }
+        case let .success(paths, copiedPaths, targetName):
+            VStack(alignment: .leading, spacing: 8) {
+                Label(
+                    UploadFeedbackFormatter.success(
+                        fileCount: paths.count,
+                        targetName: targetName,
+                        copiedPaths: copiedPaths
+                    ),
+                    systemImage: copiedPaths ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+                )
+                    .foregroundStyle(copiedPaths ? .green : .orange)
+                Text(paths.joined(separator: "\n"))
+                    .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .background(Color(nsColor: .textBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+        case let .failure(message):
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+                .textSelection(.enabled)
+        }
     }
 
     private var title: String {
@@ -413,9 +699,277 @@ private struct DropLandingView: View {
 
     private var description: String {
         guard let selectedTarget else {
-            return "Choose a host, then use Finder to send selected files or folders."
+            return "Choose a host, then use Finder or the clipboard to send files."
         }
-        return "Use Finder to send selected files or folders to \(selectedTarget.name)."
+        return "Use Finder or the clipboard to send files to \(selectedTarget.name)."
+    }
+
+    private var canDropClipboard: Bool {
+        guard selectedTarget != nil, !isDroppingClipboard else { return false }
+        if case .ready = clipboardResolution {
+            return true
+        }
+        return false
+    }
+
+    private var clipboardMessage: String {
+        switch clipboardResolution {
+        case .empty:
+            return "Copy files, folders, or an image to enable clipboard drop."
+        case let .invalid(reason):
+            return reason.message
+        case let .ready(item):
+            return item.summary
+        }
+    }
+
+    private var clipboardSystemImage: String {
+        switch clipboardResolution {
+        case .empty:
+            return "clipboard"
+        case .invalid:
+            return "exclamationmark.triangle"
+        case let .ready(item):
+            switch item.kind {
+            case .files:
+                return "checkmark.circle"
+            case .image:
+                return "photo"
+            }
+        }
+    }
+
+    private var clipboardForegroundStyle: Color {
+        switch clipboardResolution {
+        case .empty:
+            return .secondary
+        case .invalid:
+            return .orange
+        case .ready:
+            return .green
+        }
+    }
+
+    private var dropClipboardHelp: String {
+        if selectedTarget == nil {
+            return "Choose a host before dropping clipboard contents."
+        }
+        if isDroppingClipboard {
+            return "Clipboard drop is in progress."
+        }
+        switch clipboardResolution {
+        case .ready:
+            return "Upload clipboard contents to the selected host."
+        case .empty:
+            return "Copy files, folders, or an image before dropping."
+        case let .invalid(reason):
+            return reason.message
+        }
+    }
+
+    private func refreshClipboard(preservingStatus: Bool) {
+        clipboardSnapshot = AppClipboardReader.read()
+        clipboardResolution = ClipboardDropResolver.resolve(clipboardSnapshot.coreSnapshot)
+        if !preservingStatus {
+            status = .idle
+        }
+    }
+
+    private func clearStatusWhenReady() {
+        guard !isDroppingClipboard else { return }
+        guard case .ready = clipboardResolution else { return }
+        status = .idle
+    }
+
+    private func startClipboardDrop() {
+        guard !isDroppingClipboard else { return }
+        let operationID = UUID()
+        activeClipboardOperationID = operationID
+        status = .idle
+
+        let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appDrop)
+        if let currentDependencyFeedback {
+            status = .failure(currentDependencyFeedback.message)
+            transferStatusSummary = .failure(currentDependencyFeedback.message)
+            return
+        }
+
+        guard let target = selectedTarget else {
+            let message = "Select an SSH target before dropping clipboard contents."
+            status = .failure(message)
+            transferStatusSummary = .failure(message)
+            return
+        }
+
+        let refreshedSnapshot = AppClipboardReader.read()
+        let refreshedResolution = ClipboardDropResolver.resolve(refreshedSnapshot.coreSnapshot)
+        clipboardSnapshot = refreshedSnapshot
+        clipboardResolution = refreshedResolution
+
+        guard case let .ready(item) = refreshedResolution else {
+            let message = clipboardMessage
+            status = .failure(message)
+            transferStatusSummary = .failure(message)
+            return
+        }
+
+        isDroppingClipboard = true
+        status = .progress("Uploading clipboard contents...")
+        transferStatusSummary = .progress("Uploading clipboard contents...")
+
+        Task {
+            let result = await runClipboardUpload(item: item, snapshot: refreshedSnapshot, target: target)
+
+            await MainActor.run {
+                switch result {
+                case let .success(result):
+                    status = .progress("Recording transfer...")
+                    transferStatusSummary = .progress("Recording transfer...")
+                    recordSucceededUpload(target: target, uploaded: result.uploaded, operationID: operationID) {
+                        isDroppingClipboard = false
+                        status = .success(
+                            paths: result.uploaded.map(\.remoteDisplayPath),
+                            copiedPaths: result.copyResult == .copied,
+                            targetName: target.name
+                        )
+                        transferStatusSummary = .uploadSuccess(
+                            fileCount: result.uploaded.count,
+                            targetName: target.name,
+                            copiedPaths: result.copyResult == .copied
+                        )
+                        refreshClipboard(preservingStatus: true)
+                    }
+                case let .failure(failure):
+                    let message = userFacingMessage(for: failure.error)
+                    isDroppingClipboard = false
+                    status = .failure(message)
+                    transferStatusSummary = .failure(message)
+                    recordFailedUpload(
+                        target: target,
+                        item: item,
+                        fallbackLocalFileName: failure.fallbackLocalFileName,
+                        message: message,
+                        operationID: operationID
+                    )
+                }
+            }
+        }
+    }
+
+    private func runClipboardUpload(
+        item: ClipboardDropReadyItem,
+        snapshot: AppClipboardSnapshot,
+        target: SSHTarget
+    ) async -> Result<ClipboardUploadSuccess, ClipboardUploadFailure> {
+        await Task.detached(priority: .userInitiated) {
+            var stagedUpload: StagedUpload?
+            do {
+                let sources: [UploadSourceFile]
+
+                switch item.kind {
+                case .files:
+                    sources = item.sources
+                case let .image(imageDrop):
+                    guard let imagePNGData = snapshot.imagePNGData else {
+                        throw ClipboardDropAppError.missingImageData
+                    }
+                    let staged = try ClipboardImageStager.stage(pngData: imagePNGData, imageDrop: imageDrop)
+                    stagedUpload = staged
+                    sources = staged.files
+                }
+
+                let uploaded = try UploadService().upload(sources: sources, target: target, copyToClipboard: false)
+                let copyResult = ClipboardPathCopier.copyRemotePaths(from: uploaded)
+                try? stagedUpload?.cleanup()
+                return .success(ClipboardUploadSuccess(uploaded: uploaded, copyResult: copyResult))
+            } catch {
+                try? stagedUpload?.cleanup()
+                return .failure(ClipboardUploadFailure(
+                    error: error,
+                    fallbackLocalFileName: ClipboardUploadFailure.fallbackLocalName(for: item)
+                ))
+            }
+        }.value
+    }
+
+    private func recordSucceededUpload(
+        target: SSHTarget,
+        uploaded: [UploadedFile],
+        operationID: UUID,
+        onRecorded: @escaping () -> Void
+    ) {
+        let entry = UploadHistoryEntry.succeeded(targetName: target.name, uploadedFiles: uploaded)
+        recordHistory(entry, operationID: operationID, onRecorded: onRecorded)
+    }
+
+    private func recordFailedUpload(
+        target: SSHTarget,
+        item: ClipboardDropReadyItem,
+        fallbackLocalFileName: String?,
+        message: String,
+        operationID: UUID
+    ) {
+        let fileURLs = failureFileURLs(for: item, fallbackLocalFileName: fallbackLocalFileName)
+        let entry = UploadHistoryEntry.failed(
+            targetName: target.name,
+            fileURLs: fileURLs,
+            errorDescription: message
+        )
+        recordHistory(
+            entry,
+            operationID: operationID,
+            onRecorded: nil,
+            onRecordFailed: { historyErrorMessage in
+                status = .failure("\(message)\nCould not record transfer history: \(historyErrorMessage)")
+                transferStatusSummary = .failure("\(message) Could not record transfer history.")
+            }
+        )
+    }
+
+    private func recordHistory(
+        _ entry: UploadHistoryEntry,
+        operationID: UUID,
+        onRecorded: (() -> Void)?,
+        onRecordFailed: ((String) -> Void)? = nil
+    ) {
+        Task {
+            do {
+                try await historyStore.append(entry)
+                await MainActor.run {
+                    guard activeClipboardOperationID == operationID else { return }
+                    onHistoryRecorded()
+                    onRecorded?()
+                }
+            } catch {
+                let message = CLIErrorFormatter.message(for: error)
+                await MainActor.run {
+                    guard activeClipboardOperationID == operationID else { return }
+                    isDroppingClipboard = false
+                    if let onRecordFailed {
+                        onRecordFailed(message)
+                    } else {
+                        status = .failure("Could not record transfer history: \(message)")
+                        transferStatusSummary = .failure("Could not record transfer history: \(message)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func failureFileURLs(for item: ClipboardDropReadyItem, fallbackLocalFileName: String?) -> [URL] {
+        if !item.sources.isEmpty {
+            return item.sources.map(\.sourceURL)
+        }
+
+        guard let fallbackLocalFileName else { return [] }
+        return [URL(fileURLWithPath: fallbackLocalFileName)]
+    }
+
+    private func userFacingMessage(for error: Error) -> String {
+        if let description = (error as? LocalizedError)?.errorDescription {
+            return description
+        }
+        return CLIErrorFormatter.message(for: error)
     }
 }
 
@@ -754,117 +1308,89 @@ private enum PullStatus: Equatable {
     case failure(String)
 }
 
-private struct UploadHistoryView: View {
-    let refreshToken: UUID
-
-    @State private var entries: [UploadHistoryEntry] = []
-    @State private var selectedID: UploadHistoryEntry.ID?
-    @State private var loadErrorMessage: String?
-    @State private var statusMessage: String?
-    @State private var activeHistoryLoadID: UUID?
-
-    private let store = AsyncUploadHistoryStore()
-
-    var selectedEntry: UploadHistoryEntry? {
-        entries.first { $0.id == selectedID } ?? entries.first
-    }
+private struct UploadHistoryListView: View {
+    let entries: [UploadHistoryEntry]
+    @Binding var selectedID: UploadHistoryEntry.ID?
+    let loadErrorMessage: String?
+    let onRefresh: () -> Void
 
     var body: some View {
-        NavigationSplitView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Recent Transfers")
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Button {
-                        loadHistory()
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(AppSection.history.contextColumnTitle)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
 
-                if let loadErrorMessage, entries.isEmpty {
-                    ContentUnavailableView(
-                        "History unavailable",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(loadErrorMessage)
-                    )
-                } else if entries.isEmpty {
-                    ContentUnavailableView(
-                        "No transfers yet",
-                        systemImage: "tray",
-                        description: Text("Right-click a file in Finder to upload, or use Pull from... to download remote paths.")
-                    )
-                } else {
-                    List(selection: $selectedID) {
-                        ForEach(entries) { entry in
-                            UploadHistoryRow(entry: entry)
-                                .tag(entry.id)
-                        }
-                    }
-                    .listStyle(.sidebar)
-                }
+                Spacer()
 
+                Button(action: onRefresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh history")
+                .accessibilityLabel("Refresh history")
             }
-            .padding()
-            .frame(minWidth: 300)
-        } detail: {
-            if let selectedEntry {
-                UploadHistoryDetail(entry: selectedEntry, statusMessage: $statusMessage)
-            } else if let loadErrorMessage {
+
+            if let loadErrorMessage, entries.isEmpty {
                 ContentUnavailableView(
                     "History unavailable",
                     systemImage: "exclamationmark.triangle",
                     description: Text(loadErrorMessage)
                 )
-            } else {
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if entries.isEmpty {
                 ContentUnavailableView(
-                    "Select a transfer",
-                    systemImage: "doc.text.magnifyingglass",
-                    description: Text("Transfer details and copyable paths will appear here.")
+                    "No Transfers",
+                    systemImage: "tray",
+                    description: Text("Drop or pull paths to build history.")
                 )
-            }
-        }
-        .onAppear {
-            loadHistory()
-        }
-        .onChange(of: selectedID) { _, _ in
-            statusMessage = nil
-        }
-        .onChange(of: refreshToken) { _, _ in
-            loadHistory()
-        }
-    }
-
-    private func loadHistory() {
-        let loadID = UUID()
-        activeHistoryLoadID = loadID
-
-        Task {
-            let result: Result<[UploadHistoryEntry], Error>
-            do {
-                result = .success(try await store.load())
-            } catch {
-                result = .failure(error)
-            }
-
-            await MainActor.run {
-                guard activeHistoryLoadID == loadID else { return }
-
-                switch result {
-                case let .success(loadedEntries):
-                    entries = loadedEntries
-                    loadErrorMessage = nil
-                    if selectedID == nil || !loadedEntries.contains(where: { $0.id == selectedID }) {
-                        selectedID = loadedEntries.first?.id
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(selection: $selectedID) {
+                    ForEach(entries) { entry in
+                        UploadHistoryRow(entry: entry)
+                            .tag(UploadHistoryEntry.ID?.some(entry.id))
                     }
-                    statusMessage = nil
-                case .failure:
-                    entries = []
-                    selectedID = nil
-                    loadErrorMessage = "Could not read transfer history."
-                    statusMessage = nil
+                }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .padding(12)
+        .frame(width: 230)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct UploadHistoryView: View {
+    let selectedEntry: UploadHistoryEntry?
+    let loadErrorMessage: String?
+    @Binding var statusMessage: String?
+
+    var body: some View {
+        WorkspaceContent(title: "History") {
+            Group {
+                if let selectedEntry {
+                    UploadHistoryDetail(entry: selectedEntry, statusMessage: $statusMessage)
+                } else if let loadErrorMessage {
+                    ContentUnavailableView(
+                        "History unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(loadErrorMessage)
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ContentUnavailableView(
+                        "Select a transfer",
+                        systemImage: "doc.text.magnifyingglass",
+                        description: Text("Transfer details and copyable paths will appear here.")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -874,17 +1400,19 @@ private struct UploadHistoryView: View {
 private struct UploadHistoryStatusBar: View {
     let isAutoRefreshEnabled: Bool
     let lastUpdatedAt: Date?
+    let transferStatusSummary: TransferStatusSummary
     let versionDisplay: String
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(isAutoRefreshEnabled ? Color.green : Color.orange)
-                .frame(width: 7, height: 7)
-                .help(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
-                .accessibilityLabel(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
+            Image(systemName: transferStatusSummary.systemImageName)
+                .foregroundStyle(statusColor)
+                .imageScale(.small)
+                .frame(width: 12, height: 12)
+                .help(statusText)
+                .accessibilityLabel(statusText)
 
-            Text(lastUpdatedText)
+            Text(statusText)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .layoutPriority(1)
@@ -894,18 +1422,28 @@ private struct UploadHistoryStatusBar: View {
             Text(versionDisplay)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
+                .help(isAutoRefreshEnabled ? "Auto-refresh on" : "Auto-refresh unavailable")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
         .padding(.top, 2)
     }
 
-    private var lastUpdatedText: String {
-        guard let lastUpdatedAt else {
-            return "Last updated: never"
-        }
+    private var statusText: String {
+        transferStatusSummary.statusText(lastUpdatedAt: lastUpdatedAt)
+    }
 
-        return "Last updated: \(lastUpdatedAt.formatted(date: .omitted, time: .standard))"
+    private var statusColor: Color {
+        switch transferStatusSummary {
+        case .idle:
+            return isAutoRefreshEnabled ? .green : .orange
+        case .progress:
+            return .blue
+        case let .uploadSuccess(_, _, copiedPaths):
+            return copiedPaths ? .green : .orange
+        case .failure:
+            return .red
+        }
     }
 }
 
@@ -1061,5 +1599,105 @@ private struct UploadHistoryDetail: View {
             return entry.localDisplayPaths
         }
         return entry.localFileNames
+    }
+}
+
+private struct AppClipboardSnapshot: Sendable {
+    let coreSnapshot: ClipboardDropSnapshot
+    let imagePNGData: Data?
+
+    static let empty = AppClipboardSnapshot(
+        coreSnapshot: ClipboardDropSnapshot(),
+        imagePNGData: nil
+    )
+}
+
+private enum AppClipboardReader {
+    static func read(_ pasteboard: NSPasteboard = .general) -> AppClipboardSnapshot {
+        let fileURLs = readFileURLs(from: pasteboard)
+        let imageData = fileURLs.isEmpty ? readPNGData(from: pasteboard) : nil
+        let text = pasteboard.string(forType: .string)
+
+        return AppClipboardSnapshot(
+            coreSnapshot: ClipboardDropSnapshot(
+                fileURLs: fileURLs,
+                hasImageData: imageData != nil,
+                text: text
+            ),
+            imagePNGData: imageData
+        )
+    }
+
+    private static func readFileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+
+        let typedURLs = (pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [NSURL])?
+            .map { $0 as URL } ?? []
+        let legacyFilePaths = pasteboard.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] ?? []
+
+        return ClipboardFileURLSelection.fileURLs(
+            typedURLs: typedURLs,
+            legacyFilePaths: legacyFilePaths
+        )
+    }
+
+    private static func readPNGData(from pasteboard: NSPasteboard) -> Data? {
+        if let pngData = pasteboard.data(forType: .png) {
+            return pngData
+        }
+
+        guard let image = NSImage(pasteboard: pasteboard) else {
+            return nil
+        }
+        return image.pngData()
+    }
+}
+
+private extension NSImage {
+    func pngData() -> Data? {
+        guard let tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffRepresentation) else {
+            return nil
+        }
+        return bitmap.representation(using: .png, properties: [:])
+    }
+}
+
+private enum ClipboardDropStatus: Equatable {
+    case idle
+    case progress(String)
+    case success(paths: [String], copiedPaths: Bool, targetName: String)
+    case failure(String)
+}
+
+private struct ClipboardUploadSuccess: Sendable {
+    let uploaded: [UploadedFile]
+    let copyResult: ClipboardPathCopyResult
+}
+
+private struct ClipboardUploadFailure: Error, @unchecked Sendable {
+    let error: Error
+    let fallbackLocalFileName: String?
+
+    static func fallbackLocalName(for item: ClipboardDropReadyItem) -> String? {
+        switch item.kind {
+        case .files:
+            return item.sources.first?.localDisplayName
+        case let .image(imageDrop):
+            return imageDrop.localDisplayName
+        }
+    }
+}
+
+private enum ClipboardDropAppError: LocalizedError {
+    case missingImageData
+
+    var errorDescription: String? {
+        switch self {
+        case .missingImageData:
+            return "Clipboard image data is no longer available. Copy the image again and retry."
+        }
     }
 }
