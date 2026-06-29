@@ -23,6 +23,90 @@ final class TransferStatusSummaryTests: XCTestCase {
         XCTAssertEqual(summary.systemImageName, "exclamationmark.triangle.fill")
     }
 
+    func testRunningFinderUploadHistoryProducesProgressSummary() {
+        let entry = UploadHistoryEntry.uploadStarted(
+            targetName: "x570",
+            fileURLs: [
+                URL(fileURLWithPath: "/tmp/design.pdf"),
+                URL(fileURLWithPath: "/tmp/screenshots")
+            ],
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        let summary = TransferStatusSummary.runningUploadHistoryStatus(
+            from: [entry],
+            now: Date(timeIntervalSince1970: 1_060),
+            staleAfter: 1_800
+        )
+
+        XCTAssertEqual(summary, .progress("Uploading 2 files to x570..."))
+    }
+
+    func testNewestNonStaleRunningFinderUploadWins() {
+        let older = UploadHistoryEntry.uploadStarted(
+            targetName: "old",
+            fileURLs: [URL(fileURLWithPath: "/tmp/old.png")],
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+        let newer = UploadHistoryEntry.uploadStarted(
+            targetName: "new",
+            fileURLs: [URL(fileURLWithPath: "/tmp/new.png")],
+            createdAt: Date(timeIntervalSince1970: 1_100)
+        )
+
+        let summary = TransferStatusSummary.runningUploadHistoryStatus(
+            from: [older, newer],
+            now: Date(timeIntervalSince1970: 1_120),
+            staleAfter: 1_800
+        )
+
+        XCTAssertEqual(summary, .progress("Uploading 1 file to new..."))
+    }
+
+    func testStaleRunningFinderUploadDoesNotDriveProgressSummary() {
+        let entry = UploadHistoryEntry.uploadStarted(
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/design.pdf")],
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        let summary = TransferStatusSummary.runningUploadHistoryStatus(
+            from: [entry],
+            now: Date(timeIntervalSince1970: 3_001),
+            staleAfter: 1_800
+        )
+
+        XCTAssertNil(summary)
+    }
+
+    func testCompletedHistoryDoesNotDriveProgressSummary() {
+        let entry = UploadHistoryEntry.succeeded(
+            targetName: "x570",
+            uploadedFiles: [
+                UploadedFile(
+                    localURL: URL(fileURLWithPath: "/tmp/design.pdf"),
+                    remoteDisplayPath: "~/.agent-inbox/2026-06-29/design.pdf"
+                )
+            ],
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        )
+
+        let summary = TransferStatusSummary.runningUploadHistoryStatus(
+            from: [entry],
+            now: Date(timeIntervalSince1970: 1_010),
+            staleAfter: 1_800
+        )
+
+        XCTAssertNil(summary)
+    }
+
+    func testGenericSuccessMessageIsUserVisible() {
+        let summary = TransferStatusSummary.success("Uploaded 2 files to x570.")
+
+        XCTAssertEqual(summary.statusText(lastUpdatedAt: nil), "Uploaded 2 files to x570.")
+        XCTAssertEqual(summary.systemImageName, "checkmark.circle.fill")
+    }
+
     func testFailureMessageIsUserVisible() {
         let summary = TransferStatusSummary.failure("Could not upload screenshot.")
 
