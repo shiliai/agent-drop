@@ -36,7 +36,8 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
                 "/System/Volumes/Data/Users/chris",
                 "/System/Volumes/Data/Users/chris/Desktop",
                 "/System/Volumes/Data/Users/chris/Documents",
-                "/System/Volumes/Data/Users/chris/Downloads"
+                "/System/Volumes/Data/Users/chris/Downloads",
+                "/Volumes"
             ]
         )
     }
@@ -50,5 +51,13 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Desktop"))
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Documents"))
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Downloads"))
+    }
+
+    func testIncludesVolumesForMountedNetworkAndExternalVolumes() {
+        let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
+
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home).map(\.path)
+
+        XCTAssertTrue(paths.contains("/Volumes"))
     }
 }

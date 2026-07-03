@@ -24,6 +24,7 @@ public enum FinderSyncDirectoryScope {
             directories.append(base.appendingPathComponent("Documents", isDirectory: true))
             directories.append(base.appendingPathComponent("Downloads", isDirectory: true))
         }
+        directories.append(URL(fileURLWithPath: "/Volumes", isDirectory: true))
         return directories
     }
 }
