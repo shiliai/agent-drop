@@ -106,10 +106,17 @@ final class FinderSync: FIFinderSync {
 
             do {
                 Self.recordDiagnostic("upload start target=\(target.connectName) files=\(selection.files.map(\.lastPathComponent).joined(separator: ", "))")
-                let staged = try UploadStager.stage(files: selection.files)
-                defer { try? staged.cleanup() }
-                Self.recordDiagnostic("upload staged target=\(target.connectName) directory=\(staged.directory.path) files=\(staged.files.map(\.sourceURL.lastPathComponent).joined(separator: ", "))")
-                let uploaded = try UploadService(runner: self.runner).upload(sources: staged.files, target: target, copyToClipboard: false)
+                let accessedFiles = Self.startAccessing(selection.files)
+                defer { Self.stopAccessing(accessedFiles) }
+                let sources = selection.files.map { file in
+                    UploadSourceFile(
+                        sourceURL: file,
+                        remoteName: file.lastPathComponent,
+                        localDisplayName: file.lastPathComponent,
+                        isDirectory: Self.isDirectory(file)
+                    )
+                }
+                let uploaded = try UploadService(runner: self.runner).upload(sources: sources, target: target, copyToClipboard: false)
                 let entry = UploadHistoryEntry.succeeded(
                     targetName: target.name,
                     uploadedFiles: uploaded,
@@ -159,6 +166,22 @@ final class FinderSync: FIFinderSync {
         let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
         Self.recordDiagnostic("targets configBytes=\(configText.utf8.count) configured=\(configured.count) psBytes=\(ps.utf8.count) active=\(active.count)")
         return TargetResolver.merge(active: active, configured: configured)
+    }
+
+    private static func startAccessing(_ files: [URL]) -> [URL] {
+        files.filter { file in
+            file.startAccessingSecurityScopedResource()
+        }
+    }
+
+    private static func stopAccessing(_ files: [URL]) {
+        for file in files {
+            file.stopAccessingSecurityScopedResource()
+        }
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
     private func registerWorkspaceVolumeObservers() {
