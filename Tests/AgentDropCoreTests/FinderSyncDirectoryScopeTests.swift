@@ -24,7 +24,7 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
     func testBuildsFinderSyncDirectoriesFromResolvedHome() {
         let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
 
-        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home).map(\.path)
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home, mountedVolumes: []).map(\.path)
 
         XCTAssertEqual(
             Set(paths),
@@ -36,8 +36,7 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
                 "/System/Volumes/Data/Users/chris",
                 "/System/Volumes/Data/Users/chris/Desktop",
                 "/System/Volumes/Data/Users/chris/Documents",
-                "/System/Volumes/Data/Users/chris/Downloads",
-                "/Volumes"
+                "/System/Volumes/Data/Users/chris/Downloads"
             ]
         )
     }
@@ -45,7 +44,7 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
     func testIncludesDataVolumeMirrorForUserHome() {
         let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
 
-        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home).map(\.path)
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home, mountedVolumes: []).map(\.path)
 
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris"))
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Desktop"))
@@ -53,11 +52,32 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Downloads"))
     }
 
-    func testIncludesVolumesForMountedNetworkAndExternalVolumes() {
+    func testIncludesMountedNetworkAndExternalVolumes() {
         let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
 
-        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home).map(\.path)
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(
+            home: home,
+            mountedVolumes: [
+                URL(fileURLWithPath: "/Volumes/home", isDirectory: true),
+                URL(fileURLWithPath: "/Volumes/External Drive", isDirectory: true)
+            ]
+        ).map(\.path)
 
-        XCTAssertTrue(paths.contains("/Volumes"))
+        XCTAssertTrue(paths.contains("/Volumes/home"))
+        XCTAssertTrue(paths.contains("/Volumes/External Drive"))
+    }
+
+    func testDeduplicatesMountedVolumes() {
+        let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
+
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(
+            home: home,
+            mountedVolumes: [
+                URL(fileURLWithPath: "/Volumes/home", isDirectory: true),
+                URL(fileURLWithPath: "/Volumes/home/", isDirectory: true)
+            ]
+        ).map(\.path)
+
+        XCTAssertEqual(paths.filter { $0 == "/Volumes/home" }.count, 1)
     }
 }

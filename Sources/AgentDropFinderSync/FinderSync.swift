@@ -12,16 +12,22 @@ final class FinderSync: FIFinderSync {
     private let runner = ProcessCommandRunner()
     private let historyStore = UploadHistoryStore()
     private let home: URL
+    private var workspaceNotificationObservers: [NSObjectProtocol] = []
 
     override init() {
         home = HostHomeDirectoryResolver.resolve(accountHomePath: Self.accountHomePath())
         super.init()
-        let monitoredDirectories = FinderSyncDirectoryScope.monitoredDirectories(home: home)
-        FIFinderSyncController.default().directoryURLs = Set(monitoredDirectories)
-        let monitoredPaths = monitoredDirectories.map(\.path).joined(separator: ", ")
-        logger.info("Registered Finder Sync directories: \(monitoredPaths, privacy: .public)")
+        refreshMonitoredDirectories(reason: "init")
+        registerWorkspaceVolumeObservers()
         Self.registerBadges()
-        Self.recordDiagnostic("init bundle=\(Bundle.main.bundleIdentifier ?? "unknown") directories=\(monitoredPaths)")
+        Self.recordDiagnostic("init bundle=\(Bundle.main.bundleIdentifier ?? "unknown")")
+    }
+
+    deinit {
+        let notificationCenter = NSWorkspace.shared.notificationCenter
+        for observer in workspaceNotificationObservers {
+            notificationCenter.removeObserver(observer)
+        }
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
@@ -153,6 +159,33 @@ final class FinderSync: FIFinderSync {
         let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
         Self.recordDiagnostic("targets configBytes=\(configText.utf8.count) configured=\(configured.count) psBytes=\(ps.utf8.count) active=\(active.count)")
         return TargetResolver.merge(active: active, configured: configured)
+    }
+
+    private func registerWorkspaceVolumeObservers() {
+        let notificationCenter = NSWorkspace.shared.notificationCenter
+        let notifications: [NSNotification.Name] = [
+            NSWorkspace.didMountNotification,
+            NSWorkspace.didUnmountNotification,
+            NSWorkspace.didRenameVolumeNotification
+        ]
+
+        workspaceNotificationObservers = notifications.map { notification in
+            notificationCenter.addObserver(
+                forName: notification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.refreshMonitoredDirectories(reason: notification.rawValue)
+            }
+        }
+    }
+
+    private func refreshMonitoredDirectories(reason: String) {
+        let monitoredDirectories = FinderSyncDirectoryScope.monitoredDirectories(home: home)
+        FIFinderSyncController.default().directoryURLs = Set(monitoredDirectories)
+        let monitoredPaths = monitoredDirectories.map(\.path).joined(separator: ", ")
+        logger.info("Registered Finder Sync directories: \(monitoredPaths, privacy: .public)")
+        Self.recordDiagnostic("directories refreshed reason=\(reason) directories=\(monitoredPaths)")
     }
 
     private static func selectionFailureMessage(urls: [URL], selection: FileSelectionResult) -> String? {
