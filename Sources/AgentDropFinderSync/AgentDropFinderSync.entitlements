@@ -12,6 +12,7 @@
 	<array>
 		<string>/Users/chris/</string>
 		<string>/Users/chris/.ssh/</string>
+		<string>/Volumes/</string>
 	</array>
 </dict>
 </plist>
