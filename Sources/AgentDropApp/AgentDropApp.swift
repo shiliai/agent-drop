@@ -1513,8 +1513,7 @@ private struct UploadHistoryStatusBar: View {
 
 private func discoverTargets() -> [SSHTarget] {
     let runner = ProcessCommandRunner()
-    let configText = (try? String(contentsOfFile: NSString(string: "~/.ssh/config").expandingTildeInPath)) ?? ""
-    let configured = SSHConfigParser().parse(configText)
+    let configured = SSHConfigLoader().loadTargets()
 
     let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
     let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))

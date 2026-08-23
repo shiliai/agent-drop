@@ -146,12 +146,10 @@ final class FinderSync: FIFinderSync {
     }
 
     private func discoverTargets() -> [SSHTarget] {
-        let configURL = home.appendingPathComponent(".ssh/config", isDirectory: false)
-        let configText = (try? String(contentsOf: configURL)) ?? ""
-        let configured = SSHConfigParser().parse(configText)
+        let configured = SSHConfigLoader().loadTargets(homeDirectoryURL: home)
         let ps = (try? runner.run(CommandInvocation(executable: "/bin/ps", arguments: ["-axo", "command"])))?.stdout ?? ""
         let active = ActiveSSHParser().parseProcessCommands(ps.split(separator: "\n").map(String.init))
-        Self.recordDiagnostic("targets configBytes=\(configText.utf8.count) configured=\(configured.count) psBytes=\(ps.utf8.count) active=\(active.count)")
+        Self.recordDiagnostic("targets configured=\(configured.count) psBytes=\(ps.utf8.count) active=\(active.count)")
         return TargetResolver.merge(active: active, configured: configured)
     }
 
