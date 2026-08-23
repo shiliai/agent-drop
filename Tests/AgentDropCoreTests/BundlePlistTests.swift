@@ -62,7 +62,7 @@ final class BundlePlistTests: XCTestCase {
         XCTAssertEqual(entitlements["com.apple.security.files.user-selected.read-only"] as? Bool, true)
         XCTAssertEqual(
             entitlements["com.apple.security.temporary-exception.files.absolute-path.read-only"] as? [String],
-            ["/Users/chris/", "/Users/chris/.ssh/"]
+            ["/Users/chris/", "/Users/chris/.ssh/", "/Volumes/"]
         )
     }
 

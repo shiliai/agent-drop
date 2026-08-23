@@ -562,6 +562,7 @@ private struct DropLandingView: View {
     @State private var status = ClipboardDropStatus.idle
     @State private var isDroppingClipboard = false
     @State private var activeClipboardOperationID: UUID?
+    @State private var finderExtensionAvailability: FinderExtensionAvailability?
 
     private let historyStore = AsyncUploadHistoryStore()
 
@@ -574,10 +575,12 @@ private struct DropLandingView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             refreshClipboard(preservingStatus: true)
+            refreshFinderExtensionAvailability()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 refreshClipboard(preservingStatus: true)
+                refreshFinderExtensionAvailability()
             }
         }
         .onChange(of: selectedTarget?.id) { _, _ in
@@ -619,6 +622,10 @@ private struct DropLandingView: View {
 
             Text("Select files or folders in Finder, right-click, choose Agent Drop, then pick the selected host.")
                 .foregroundStyle(.secondary)
+
+            if finderExtensionAvailability?.status.needsSetup == true {
+                finderExtensionSetupNotice
+            }
 
             Spacer(minLength: 0)
 
@@ -714,6 +721,38 @@ private struct DropLandingView: View {
         }
     }
 
+    private var finderExtensionSetupNotice: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(finderExtensionSetupMessage, systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 10) {
+                Button {
+                    openExtensionsSettings()
+                } label: {
+                    Label("Open System Settings", systemImage: "gearshape")
+                }
+
+                Button {
+                    restartFinder()
+                    refreshFinderExtensionAvailability()
+                } label: {
+                    Label("Restart Finder", systemImage: "arrow.clockwise")
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.orange.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(Color.orange.opacity(0.35))
+        }
+    }
+
     @ViewBuilder
     private var statusView: some View {
         switch status {
@@ -749,6 +788,23 @@ private struct DropLandingView: View {
             Label(message, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.red)
                 .textSelection(.enabled)
+        }
+    }
+
+    private var finderExtensionSetupMessage: String {
+        guard let finderExtensionAvailability else {
+            return ""
+        }
+
+        switch finderExtensionAvailability.status {
+        case .enabled:
+            return ""
+        case .disabled:
+            return "Finder extension is installed but disabled. Enable Agent Drop in System Settings, then restart Finder."
+        case .notRegistered:
+            return "Finder extension is not registered with macOS. Open System Settings after reinstalling Agent Drop, then restart Finder."
+        case let .unknown(message):
+            return "Could not check Finder extension status. Open System Settings to confirm Agent Drop is enabled. \(message)"
         }
     }
 
@@ -835,6 +891,32 @@ private struct DropLandingView: View {
         if !preservingStatus {
             status = .idle
         }
+    }
+
+    private func refreshFinderExtensionAvailability() {
+        Task.detached {
+            let availability = FinderExtensionAvailabilityChecker.check()
+            await MainActor.run {
+                finderExtensionAvailability = availability
+            }
+        }
+    }
+
+    private func openExtensionsSettings() {
+        let urls = [
+            URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"),
+            URL(string: "x-apple.systempreferences:com.apple.ExtensionsPreferences")
+        ].compactMap { $0 }
+
+        for url in urls where NSWorkspace.shared.open(url) {
+            return
+        }
+
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
+    }
+
+    private func restartFinder() {
+        _ = try? Process.run(URL(fileURLWithPath: "/usr/bin/killall"), arguments: ["Finder"])
     }
 
     private func clearStatusWhenReady() {

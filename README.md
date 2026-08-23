@@ -170,7 +170,6 @@ rm -rf "$APP_DEST"
 /usr/bin/ditto "$APP_SRC" "$APP_DEST"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f -R -trusted "$APP_DEST"
 xcrun pluginkit -a "$APP_DEST/Contents/PlugIns/AgentDropFinderSync.appex" || true
-xcrun pluginkit -e use -i ai.shili.AgentDrop.FinderSync || true
 open -n "$APP_DEST"
 killall Finder
 ```
@@ -178,6 +177,10 @@ killall Finder
 If the right-click menu is not visible, open System Settings > Login Items &
 Extensions > Extensions and enable the Agent Drop Finder extension. Restart
 Finder after changing the extension state.
+
+Agent Drop also checks Finder extension availability in the `Transfer > Drop`
+screen. If the Finder menu is missing, use the in-app `Open System Settings`
+and `Restart Finder` actions, then retry from Finder.
 
 Run the CLI during development:
 
@@ -200,6 +203,8 @@ directory contents and choosing a suffixed name if the local destination exists.
 - The Finder menu is `Agent Drop -> <SSH target>` for uploads.
 - `Agent Drop -> Pull from...` opens the app's `Transfer` section in Pull mode
   through `agentdrop://pull`.
+- The extension monitors local user folders and `/Volumes`, so Finder menus can
+  appear for mounted SMB/network shares and external volumes.
 - The root menu item includes a small template upload icon.
 - On upload success or failure, Finder badges the selected file briefly.
 - While a Finder upload is running, the extension writes a live history row so

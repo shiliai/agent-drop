@@ -24,7 +24,7 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
     func testBuildsFinderSyncDirectoriesFromResolvedHome() {
         let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
 
-        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home).map(\.path)
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home, mountedVolumes: []).map(\.path)
 
         XCTAssertEqual(
             Set(paths),
@@ -44,11 +44,40 @@ final class FinderSyncDirectoryScopeTests: XCTestCase {
     func testIncludesDataVolumeMirrorForUserHome() {
         let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
 
-        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home).map(\.path)
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(home: home, mountedVolumes: []).map(\.path)
 
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris"))
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Desktop"))
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Documents"))
         XCTAssertTrue(paths.contains("/System/Volumes/Data/Users/chris/Downloads"))
+    }
+
+    func testIncludesMountedNetworkAndExternalVolumes() {
+        let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
+
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(
+            home: home,
+            mountedVolumes: [
+                URL(fileURLWithPath: "/Volumes/home", isDirectory: true),
+                URL(fileURLWithPath: "/Volumes/External Drive", isDirectory: true)
+            ]
+        ).map(\.path)
+
+        XCTAssertTrue(paths.contains("/Volumes/home"))
+        XCTAssertTrue(paths.contains("/Volumes/External Drive"))
+    }
+
+    func testDeduplicatesMountedVolumes() {
+        let home = URL(fileURLWithPath: "/Users/chris", isDirectory: true)
+
+        let paths = FinderSyncDirectoryScope.monitoredDirectories(
+            home: home,
+            mountedVolumes: [
+                URL(fileURLWithPath: "/Volumes/home", isDirectory: true),
+                URL(fileURLWithPath: "/Volumes/home/", isDirectory: true)
+            ]
+        ).map(\.path)
+
+        XCTAssertEqual(paths.filter { $0 == "/Volumes/home" }.count, 1)
     }
 }
