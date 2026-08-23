@@ -26,8 +26,8 @@
         </dict>
     </array>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.4</string>
+    <string>0.2.5</string>
     <key>CFBundleVersion</key>
-    <string>5</string>
+    <string>6</string>
 </dict>
 </plist>
