@@ -37,12 +37,17 @@ public protocol CommandPiping {
 }
 
 public struct ProcessCommandRunner: CommandRunning, CommandPiping {
-    public init() {}
+    private let environment: [String: String]?
+
+    public init(environment: [String: String]? = nil) {
+        self.environment = environment
+    }
 
     public func run(_ invocation: CommandInvocation) throws -> CommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: invocation.executable)
         process.arguments = invocation.arguments
+        applyEnvironment(to: process)
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -97,6 +102,8 @@ public struct ProcessCommandRunner: CommandRunning, CommandPiping {
         let consumer = Process()
         consumer.executableURL = URL(fileURLWithPath: consumerInvocation.executable)
         consumer.arguments = consumerInvocation.arguments
+        applyEnvironment(to: producer)
+        applyEnvironment(to: consumer)
 
         let archivePipe = Pipe()
         producer.standardOutput = archivePipe
@@ -177,6 +184,11 @@ public struct ProcessCommandRunner: CommandRunning, CommandPiping {
             capture.data = handle.readDataToEndOfFile()
             group.leave()
         }
+    }
+
+    private func applyEnvironment(to process: Process) {
+        guard let environment else { return }
+        process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
     }
 }
 
