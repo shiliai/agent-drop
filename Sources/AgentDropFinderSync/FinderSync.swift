@@ -9,9 +9,9 @@ private let successBadgeIdentifier = "agent-drop-success"
 private let failureBadgeIdentifier = "agent-drop-failure"
 
 final class FinderSync: FIFinderSync {
-    private let runner = ProcessCommandRunner()
     private let historyStore = UploadHistoryStore()
     private let home: URL
+    private lazy var runner = ProcessCommandRunner(environment: ["HOME": home.path])
 
     override init() {
         home = HostHomeDirectoryResolver.resolve(accountHomePath: Self.accountHomePath())
