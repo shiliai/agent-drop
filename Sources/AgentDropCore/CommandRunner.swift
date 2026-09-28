@@ -32,11 +32,18 @@ public protocol CommandRunning {
     func run(_ invocation: CommandInvocation) throws -> CommandResult
 }
 
+public protocol ProgressReportingCommandRunning: CommandRunning {
+    func run(
+        _ invocation: CommandInvocation,
+        progress: (@Sendable (String) -> Void)?
+    ) throws -> CommandResult
+}
+
 public protocol CommandPiping {
     func runPipeline(stdoutOf producer: CommandInvocation, intoStdinOf consumer: CommandInvocation) throws -> CommandResult
 }
 
-public struct ProcessCommandRunner: CommandRunning, CommandPiping {
+public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunning, CommandPiping {
     private let environment: [String: String]?
 
     public init(environment: [String: String]? = nil) {
@@ -92,6 +99,75 @@ public struct ProcessCommandRunner: CommandRunning, CommandPiping {
         let out = String(data: stdoutCapture.data, encoding: .utf8) ?? ""
         let err = String(data: stderrCapture.data, encoding: .utf8) ?? ""
         return CommandResult(exitCode: process.terminationStatus, stdout: out, stderr: err)
+    }
+
+    public func run(
+        _ invocation: CommandInvocation,
+        progress: (@Sendable (String) -> Void)?
+    ) throws -> CommandResult {
+        guard let progress else {
+            return try run(invocation)
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: invocation.executable)
+        process.arguments = invocation.arguments
+        applyEnvironment(to: process)
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        let input = invocation.standardInput.map { _ in Pipe() }
+        if let input {
+            process.standardInput = input
+        }
+
+        let stderrState = StreamingStderrState()
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            let text = String(data: data, encoding: .utf8) ?? ""
+            let completeLines = stderrState.append(data: data, text: text)
+
+            for line in completeLines {
+                progress(String(line).trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+
+        let stdoutCapture = ProcessOutputCapture()
+        let stdoutQueue = DispatchQueue(label: "agent-drop.command-runner.progress.stdout")
+        let stdoutGroup = DispatchGroup()
+        stdoutGroup.enter()
+        stdoutQueue.async {
+            stdoutCapture.data = stdout.fileHandleForReading.readDataToEndOfFile()
+            stdoutGroup.leave()
+        }
+
+        try process.run()
+
+        if let standardInput = invocation.standardInput, let input {
+            if let data = standardInput.data(using: .utf8) {
+                input.fileHandleForWriting.write(data)
+            }
+            input.fileHandleForWriting.closeFile()
+        }
+
+        process.waitUntilExit()
+        stderr.fileHandleForReading.readabilityHandler = nil
+        let remainder = stderr.fileHandleForReading.readDataToEndOfFile()
+        let finalLine = stderrState.appendRemainder(remainder)
+        if !finalLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            progress(finalLine.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        stdoutGroup.wait()
+
+        return CommandResult(
+            exitCode: process.terminationStatus,
+            stdout: String(data: stdoutCapture.data, encoding: .utf8) ?? "",
+            stderr: String(data: stderrState.data, encoding: .utf8) ?? ""
+        )
     }
 
     public func runPipeline(stdoutOf producerInvocation: CommandInvocation, intoStdinOf consumerInvocation: CommandInvocation) throws -> CommandResult {
@@ -194,6 +270,32 @@ public struct ProcessCommandRunner: CommandRunning, CommandPiping {
 
 private final class ProcessOutputCapture: @unchecked Sendable {
     var data = Data()
+}
+
+private final class StreamingStderrState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingLine = ""
+    private(set) var data = Data()
+
+    func append(data: Data, text: String) -> [Substring] {
+        lock.lock()
+        defer { lock.unlock() }
+        self.data.append(data)
+        pendingLine += text
+        let lines = pendingLine.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+        pendingLine = lines.last.map(String.init) ?? ""
+        return Array(lines.dropLast())
+    }
+
+    func appendRemainder(_ data: Data) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        self.data.append(data)
+        pendingLine += String(data: data, encoding: .utf8) ?? ""
+        let finalLine = pendingLine
+        pendingLine = ""
+        return finalLine
+    }
 }
 
 public protocol ClipboardWriting {

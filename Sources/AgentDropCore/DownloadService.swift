@@ -50,7 +50,8 @@ public final class DownloadService {
         remotePaths: [RemotePath],
         target: SSHTarget,
         destinationRoot: URL? = nil,
-        copyToClipboard: Bool = true
+        copyToClipboard: Bool = true,
+        progress: TransferProgressHandler? = nil
     ) throws -> [DownloadedFile] {
         guard !remotePaths.isEmpty else {
             throw DownloadError.noRemotePaths
@@ -74,13 +75,20 @@ public final class DownloadService {
             }
 
             do {
-                let plan = DownloadTransferPlanner.plan(
+                let plannedTransfer = DownloadTransferPlanner.plan(
                     target: target,
                     remotePath: remotePath.path,
                     kind: remoteKind,
                     reservedDestination: reserved
                 )
-                try execute(plan, remotePath: remotePath.path, target: target)
+                let plan = progressEnabledPlan(
+                    plannedTransfer,
+                    target: target,
+                    remotePath: remotePath.path,
+                    reservedDestination: reserved,
+                    progress: progress
+                )
+                try execute(plan, remotePath: remotePath.path, target: target, progress: progress)
                 downloaded.append(DownloadedFile(
                     remotePath: remotePath.path,
                     localURL: reserved.url,
@@ -182,10 +190,15 @@ public final class DownloadService {
         }
     }
 
-    private func execute(_ plan: DownloadTransferPlan, remotePath: String, target: SSHTarget) throws {
+    private func execute(
+        _ plan: DownloadTransferPlan,
+        remotePath: String,
+        target: SSHTarget,
+        progress: TransferProgressHandler?
+    ) throws {
         switch plan.execution {
         case let .command(invocation):
-            let result = try runner.run(invocation)
+            let result = try runRsync(invocation, progress: progress)
             guard result.succeeded else {
                 throw DownloadError.rsyncFailed(failureMessage(
                     target: target,
@@ -207,6 +220,43 @@ public final class DownloadService {
                 ))
             }
         }
+    }
+
+    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?) throws -> CommandResult {
+        guard let progress, let progressRunner = runner as? ProgressReportingCommandRunning else {
+            return try runner.run(invocation)
+        }
+
+        let progressInvocation = CommandInvocation(
+            executable: invocation.executable,
+            arguments: ["--info=progress2"] + invocation.arguments,
+            standardInput: invocation.standardInput
+        )
+        return try progressRunner.run(progressInvocation) { line in
+            if let parsed = RsyncProgressParser.parse(line) {
+                progress(parsed)
+            }
+        }
+    }
+
+    private func progressEnabledPlan(
+        _ plan: DownloadTransferPlan,
+        target: SSHTarget,
+        remotePath: String,
+        reservedDestination: ReservedLocalDestination,
+        progress: TransferProgressHandler?
+    ) -> DownloadTransferPlan {
+        guard progress != nil, plan.strategy == .tarStream else { return plan }
+        return DownloadTransferPlan(
+            strategy: .rsyncDirectory,
+            execution: .command(
+                DownloadTransferPlanner.rsyncDirectoryCommand(
+                    target: target,
+                    remotePath: remotePath,
+                    localURL: reservedDestination.url
+                )
+            )
+        )
     }
 
     private func failureMessage(
