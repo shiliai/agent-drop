@@ -45,7 +45,12 @@ public final class UploadService {
         self.inboxPath = RemoteInboxPath(clock: clock)
     }
 
-    public func upload(files: [URL], target: SSHTarget, copyToClipboard: Bool = true) throws -> [UploadedFile] {
+    public func upload(
+        files: [URL],
+        target: SSHTarget,
+        copyToClipboard: Bool = true,
+        progress: TransferProgressHandler? = nil
+    ) throws -> [UploadedFile] {
         try upload(
             sources: files.map {
                 UploadSourceFile(
@@ -55,11 +60,17 @@ public final class UploadService {
                 )
             },
             target: target,
-            copyToClipboard: copyToClipboard
+            copyToClipboard: copyToClipboard,
+            progress: progress
         )
     }
 
-    public func upload(sources: [UploadSourceFile], target: SSHTarget, copyToClipboard: Bool = true) throws -> [UploadedFile] {
+    public func upload(
+        sources: [UploadSourceFile],
+        target: SSHTarget,
+        copyToClipboard: Bool = true,
+        progress: TransferProgressHandler? = nil
+    ) throws -> [UploadedFile] {
         try createRemoteDirectory(target: target)
 
         var uploaded: [UploadedFile] = []
@@ -70,10 +81,10 @@ public final class UploadService {
             let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath) + (source.isDirectory ? "/" : "")
             let sourcePath = source.sourceURL.path + (source.isDirectory ? "/" : "")
 
-            let result = try runner.run(CommandInvocation(
+            let result = try runRsync(CommandInvocation(
                 executable: "/usr/bin/rsync",
                 arguments: ["-a", sourcePath, "\(target.connectName):\(commandPath)"]
-            ))
+            ), progress: progress)
 
             guard result.succeeded else {
                 removeReservedRemoteName(relativePath: relativePath, target: target, isDirectory: source.isDirectory)
@@ -96,6 +107,23 @@ public final class UploadService {
         }
 
         return uploaded
+    }
+
+    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?) throws -> CommandResult {
+        guard let progress, let progressRunner = runner as? ProgressReportingCommandRunning else {
+            return try runner.run(invocation)
+        }
+
+        let progressInvocation = CommandInvocation(
+            executable: invocation.executable,
+            arguments: ["--info=progress2"] + invocation.arguments,
+            standardInput: invocation.standardInput
+        )
+        return try progressRunner.run(progressInvocation) { line in
+            if let parsed = RsyncProgressParser.parse(line) {
+                progress(parsed)
+            }
+        }
     }
 
     private func createRemoteDirectory(target: SSHTarget) throws {

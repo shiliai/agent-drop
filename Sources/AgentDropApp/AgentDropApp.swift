@@ -397,6 +397,7 @@ private struct TransferWorkspaceView: View {
                 targets: targets,
                 selectedTargetID: $navigation.selectedTargetID,
                 remotePathText: $remotePathText,
+                transferStatusSummary: $transferStatusSummary,
                 dependencyFeedback: dependencyFeedback(for: .appPull),
                 dependencyFeedbackProvider: DependencyFeedbackProvider(),
                 onHistoryRecorded: onHistoryRecorded
@@ -562,6 +563,7 @@ private struct DropLandingView: View {
     @State private var status = ClipboardDropStatus.idle
     @State private var isDroppingClipboard = false
     @State private var activeClipboardOperationID: UUID?
+    @State private var transferProgress: TransferProgress?
 
     private let historyStore = AsyncUploadHistoryStore()
 
@@ -720,12 +722,7 @@ private struct DropLandingView: View {
         case .idle:
             EmptyView()
         case let .progress(message):
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text(message)
-                    .foregroundStyle(.secondary)
-            }
+            TransferProgressStatusView(message: message, progress: transferProgress)
         case let .success(paths, copiedPaths, targetName):
             VStack(alignment: .leading, spacing: 8) {
                 Label(
@@ -847,6 +844,7 @@ private struct DropLandingView: View {
         guard !isDroppingClipboard else { return }
         let operationID = UUID()
         activeClipboardOperationID = operationID
+        transferProgress = nil
         status = .idle
 
         let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appDrop)
@@ -880,11 +878,23 @@ private struct DropLandingView: View {
         transferStatusSummary = .progress("Uploading clipboard contents...")
 
         Task {
-            let result = await runClipboardUpload(item: item, snapshot: refreshedSnapshot, target: target)
+            let result = await runClipboardUpload(
+                item: item,
+                snapshot: refreshedSnapshot,
+                target: target,
+                onProgress: { progress in
+                    Task { @MainActor in
+                        guard activeClipboardOperationID == operationID else { return }
+                        transferProgress = progress
+                        transferStatusSummary = .progress(progress.displayText(prefix: "Uploading"))
+                    }
+                }
+            )
 
             await MainActor.run {
                 switch result {
                 case let .success(result):
+                    transferProgress = nil
                     status = .progress("Recording transfer...")
                     transferStatusSummary = .progress("Recording transfer...")
                     recordSucceededUpload(target: target, uploaded: result.uploaded, operationID: operationID) {
@@ -902,6 +912,7 @@ private struct DropLandingView: View {
                         refreshClipboard(preservingStatus: true)
                     }
                 case let .failure(failure):
+                    transferProgress = nil
                     let message = userFacingMessage(for: failure.error)
                     isDroppingClipboard = false
                     status = .failure(message)
@@ -921,7 +932,8 @@ private struct DropLandingView: View {
     private func runClipboardUpload(
         item: ClipboardDropReadyItem,
         snapshot: AppClipboardSnapshot,
-        target: SSHTarget
+        target: SSHTarget,
+        onProgress: @escaping TransferProgressHandler
     ) async -> Result<ClipboardUploadSuccess, ClipboardUploadFailure> {
         await Task.detached(priority: .userInitiated) {
             var stagedUpload: StagedUpload?
@@ -940,7 +952,12 @@ private struct DropLandingView: View {
                     sources = staged.files
                 }
 
-                let uploaded = try UploadService().upload(sources: sources, target: target, copyToClipboard: false)
+                let uploaded = try UploadService().upload(
+                    sources: sources,
+                    target: target,
+                    copyToClipboard: false,
+                    progress: onProgress
+                )
                 let copyResult = ClipboardPathCopier.copyRemotePaths(from: uploaded)
                 try? stagedUpload?.cleanup()
                 return .success(ClipboardUploadSuccess(uploaded: uploaded, copyResult: copyResult))
@@ -1039,6 +1056,7 @@ private struct PullFormView: View {
     let targets: [SSHTarget]
     @Binding var selectedTargetID: SSHTarget.ID?
     @Binding var remotePathText: String
+    @Binding var transferStatusSummary: TransferStatusSummary
     let dependencyFeedback: DependencyFeedback?
     let dependencyFeedbackProvider: DependencyFeedbackProvider
     let onHistoryRecorded: () -> Void
@@ -1046,6 +1064,7 @@ private struct PullFormView: View {
     @State private var status = PullStatus.idle
     @State private var isDownloading = false
     @State private var activePullOperationID: UUID?
+    @State private var transferProgress: TransferProgress?
 
     private let historyStore = AsyncUploadHistoryStore()
 
@@ -1151,12 +1170,7 @@ private struct PullFormView: View {
         case .idle:
             EmptyView()
         case let .progress(message):
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                Text(message)
-                    .foregroundStyle(.secondary)
-            }
+            TransferProgressStatusView(message: message, progress: transferProgress)
         case let .success(paths):
             VStack(alignment: .leading, spacing: 8) {
                 Label("Downloaded and copied local paths.", systemImage: "checkmark.circle.fill")
@@ -1208,22 +1222,26 @@ private struct PullFormView: View {
         guard !isDownloading else { return }
         let operationID = UUID()
         activePullOperationID = operationID
+        transferProgress = nil
         status = .idle
 
         let currentDependencyFeedback = dependencyFeedbackProvider.feedback(for: .appPull)
         if let currentDependencyFeedback {
             status = .failure(currentDependencyFeedback.message)
+            transferStatusSummary = .failure(currentDependencyFeedback.message)
             return
         }
 
         guard let target = selectedTarget else {
             status = .failure("Select an SSH target before downloading.")
+            transferStatusSummary = .failure("Select an SSH target before downloading.")
             return
         }
 
         let rawRemotePaths = normalizedInputLines(from: remotePathText)
         guard !rawRemotePaths.isEmpty else {
             status = .failure("Enter at least one remote path.")
+            transferStatusSummary = .failure("Enter at least one remote path.")
             return
         }
 
@@ -1233,6 +1251,7 @@ private struct PullFormView: View {
         } catch {
             let message = CLIErrorFormatter.message(for: error)
             status = .failure(message)
+            transferStatusSummary = .failure(message)
             recordFailedDownload(
                 target: target,
                 remotePaths: rawRemotePaths,
@@ -1244,22 +1263,39 @@ private struct PullFormView: View {
 
         isDownloading = true
         status = .progress("Downloading...")
+        transferStatusSummary = .progress("Downloading...")
 
         Task {
-            let result = await runDownload(remotePaths: remotePaths, target: target)
+            let result = await runDownload(
+                remotePaths: remotePaths,
+                target: target,
+                onProgress: { progress in
+                    Task { @MainActor in
+                        guard activePullOperationID == operationID else { return }
+                        transferProgress = progress
+                        transferStatusSummary = .progress(progress.displayText(prefix: "Downloading"))
+                    }
+                }
+            )
 
             await MainActor.run {
                 switch result {
                 case let .success(downloaded):
+                    transferProgress = nil
                     status = .progress("Recording transfer...")
+                    transferStatusSummary = .progress("Recording transfer...")
                     recordSucceededDownload(target: target, downloaded: downloaded, operationID: operationID) {
                         isDownloading = false
                         status = .success(downloaded.map(\.localDisplayPath))
+                        let noun = downloaded.count == 1 ? "file" : "files"
+                        transferStatusSummary = .success("Downloaded \(downloaded.count) \(noun) from \(target.name).")
                     }
                 case let .failure(error):
+                    transferProgress = nil
                     let message = CLIErrorFormatter.message(for: error)
                     isDownloading = false
                     status = .failure(message)
+                    transferStatusSummary = .failure(message)
                     recordFailedDownload(
                         target: target,
                         remotePaths: remotePaths.map(\.path),
@@ -1271,10 +1307,18 @@ private struct PullFormView: View {
         }
     }
 
-    private func runDownload(remotePaths: [RemotePath], target: SSHTarget) async -> Result<[DownloadedFile], Error> {
+    private func runDownload(
+        remotePaths: [RemotePath],
+        target: SSHTarget,
+        onProgress: @escaping TransferProgressHandler
+    ) async -> Result<[DownloadedFile], Error> {
         await Task.detached(priority: .userInitiated) {
             do {
-                let downloaded = try DownloadService().download(remotePaths: remotePaths, target: target)
+                let downloaded = try DownloadService().download(
+                    remotePaths: remotePaths,
+                    target: target,
+                    progress: onProgress
+                )
                 return .success(downloaded)
             } catch {
                 return .failure(error)
@@ -1368,6 +1412,27 @@ private enum PullStatus: Equatable {
     case progress(String)
     case success([String])
     case failure(String)
+}
+
+private struct TransferProgressStatusView: View {
+    let message: String
+    let progress: TransferProgress?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let fractionCompleted = progress?.fractionCompleted {
+                ProgressView(value: fractionCompleted)
+                    .frame(maxWidth: 520)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            Text(progress?.displayText(prefix: message) ?? message)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+    }
 }
 
 private struct UploadHistoryListView: View {
