@@ -116,7 +116,7 @@ public final class UploadService {
 
         let progressInvocation = CommandInvocation(
             executable: invocation.executable,
-            arguments: ["--info=progress2"] + invocation.arguments,
+            arguments: ["--progress"] + invocation.arguments,
             standardInput: invocation.standardInput
         )
         return try progressRunner.run(progressInvocation) { line in
