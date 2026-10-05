@@ -124,28 +124,13 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
             process.standardInput = input
         }
 
-        let stderrState = StreamingStderrState()
-        stderr.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            let text = String(data: data, encoding: .utf8) ?? ""
-            let completeLines = stderrState.append(data: data, text: text)
-
-            for line in completeLines {
-                progress(String(line).trimmingCharacters(in: .whitespacesAndNewlines))
-            }
-        }
+        try process.run()
 
         let stdoutCapture = ProcessOutputCapture()
-        let stdoutQueue = DispatchQueue(label: "agent-drop.command-runner.progress.stdout")
-        let stdoutGroup = DispatchGroup()
-        stdoutGroup.enter()
-        stdoutQueue.async {
-            stdoutCapture.data = stdout.fileHandleForReading.readDataToEndOfFile()
-            stdoutGroup.leave()
-        }
-
-        try process.run()
+        let stderrCapture = ProcessOutputCapture()
+        let outputGroup = DispatchGroup()
+        captureProgress(stdout.fileHandleForReading, into: stdoutCapture, group: outputGroup, progress: progress)
+        captureProgress(stderr.fileHandleForReading, into: stderrCapture, group: outputGroup, progress: progress)
 
         if let standardInput = invocation.standardInput, let input {
             if let data = standardInput.data(using: .utf8) {
@@ -155,18 +140,12 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
         }
 
         process.waitUntilExit()
-        stderr.fileHandleForReading.readabilityHandler = nil
-        let remainder = stderr.fileHandleForReading.readDataToEndOfFile()
-        let finalLine = stderrState.appendRemainder(remainder)
-        if !finalLine.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            progress(finalLine.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        stdoutGroup.wait()
+        outputGroup.wait()
 
         return CommandResult(
             exitCode: process.terminationStatus,
             stdout: String(data: stdoutCapture.data, encoding: .utf8) ?? "",
-            stderr: String(data: stderrState.data, encoding: .utf8) ?? ""
+            stderr: String(data: stderrCapture.data, encoding: .utf8) ?? ""
         )
     }
 
@@ -262,6 +241,40 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
         }
     }
 
+    private func captureProgress(
+        _ handle: FileHandle,
+        into capture: ProcessOutputCapture,
+        group: DispatchGroup,
+        progress: @escaping @Sendable (String) -> Void
+    ) {
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            defer { group.leave() }
+            var pendingLine = Data()
+            while true {
+                let data = handle.availableData
+                guard !data.isEmpty else { break }
+                capture.data.append(data)
+                // rsync progress uses carriage returns and may arrive on either stream.
+                for byte in data {
+                    if byte == 10 || byte == 13 {
+                        if !pendingLine.isEmpty {
+                            progress(String(decoding: pendingLine, as: UTF8.self)
+                                .trimmingCharacters(in: .whitespacesAndNewlines))
+                            pendingLine.removeAll(keepingCapacity: true)
+                        }
+                    } else {
+                        pendingLine.append(byte)
+                    }
+                }
+            }
+            if !pendingLine.isEmpty {
+                progress(String(decoding: pendingLine, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+    }
+
     private func applyEnvironment(to process: Process) {
         guard let environment else { return }
         process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
@@ -270,32 +283,6 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
 
 private final class ProcessOutputCapture: @unchecked Sendable {
     var data = Data()
-}
-
-private final class StreamingStderrState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pendingLine = ""
-    private(set) var data = Data()
-
-    func append(data: Data, text: String) -> [Substring] {
-        lock.lock()
-        defer { lock.unlock() }
-        self.data.append(data)
-        pendingLine += text
-        let lines = pendingLine.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-        pendingLine = lines.last.map(String.init) ?? ""
-        return Array(lines.dropLast())
-    }
-
-    func appendRemainder(_ data: Data) -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        self.data.append(data)
-        pendingLine += String(data: data, encoding: .utf8) ?? ""
-        let finalLine = pendingLine
-        pendingLine = ""
-        return finalLine
-    }
 }
 
 public protocol ClipboardWriting {

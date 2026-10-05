@@ -3,6 +3,51 @@ import XCTest
 @testable import AgentDropCore
 
 final class CommandRunnerTests: XCTestCase {
+    func testStreamsBothOutputsBeforeExitAndPreservesFailureDiagnostics() throws {
+        let root = try makeCommandRunnerTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stdoutAck = root.appendingPathComponent("stdout-ack").path
+        let stderrAck = root.appendingPathComponent("stderr-ack").path
+        let script = """
+        alarm 5;
+        $| = 1;
+        select STDERR; $| = 1; select STDOUT;
+        print STDOUT "1024  50%  1.00MB/s  0:00:01\\r";
+        print STDERR "2048  75%  2.00MB/s  0:00:02\\n";
+        while (!-e $ARGV[0] || !-e $ARGV[1]) { select undef, undef, undef, 0.01; }
+        print STDOUT "final stdout";
+        print STDERR "transfer failed";
+        exit 23;
+        """
+
+        let result = try ProcessCommandRunner().run(CommandInvocation(
+            executable: "/usr/bin/perl",
+            arguments: ["-e", script, stdoutAck, stderrAck]
+        )) { line in
+            if line.hasPrefix("1024") {
+                _ = FileManager.default.createFile(atPath: stdoutAck, contents: Data())
+            } else if line.hasPrefix("2048") {
+                _ = FileManager.default.createFile(atPath: stderrAck, contents: Data())
+            }
+        }
+
+        XCTAssertEqual(result.exitCode, 23)
+        XCTAssertEqual(result.stdout, "1024  50%  1.00MB/s  0:00:01\rfinal stdout")
+        XCTAssertEqual(result.stderr, "2048  75%  2.00MB/s  0:00:02\ntransfer failed")
+    }
+
+    func testProgressLaunchFailureAllowsSubsequentRuns() throws {
+        let runner = ProcessCommandRunner()
+        for _ in 0..<8 {
+            XCTAssertThrowsError(try runner.run(CommandInvocation(
+                executable: "/tmp/agent-drop-definitely-missing-command",
+                arguments: []
+            ), progress: { _ in }))
+        }
+        let result = try runner.run(CommandInvocation(executable: "/bin/echo", arguments: ["still-runs"]), progress: { _ in })
+        XCTAssertEqual(result.stdout, "still-runs\n")
+    }
+
     func testLaunchFailureDoesNotLeaveBlockedPipeReadersAndAllowsSubsequentRuns() throws {
         let runner = ProcessCommandRunner()
         let threadCountBefore = try currentThreadCount()
