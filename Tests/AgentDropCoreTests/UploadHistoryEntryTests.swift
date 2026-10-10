@@ -90,6 +90,26 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertEqual(decoded, entry)
     }
 
+    func testEncodesAndDecodesRunningUploadProgress() throws {
+        let entry = UploadHistoryEntry.uploadStarted(
+            id: fixedUUID(0x14),
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/demo.bin")],
+            createdAt: Date(timeIntervalSince1970: 1_782_748_800)
+        ).updatingProgress(TransferProgress(
+            completedBytes: 1_024,
+            fractionCompleted: 0.5,
+            bytesPerSecond: 2_000_000,
+            estimatedTimeRemaining: 4
+        ))
+
+        let data = try JSONEncoder.agentDropHistory.encode(entry)
+        let decoded = try JSONDecoder.agentDropHistory.decode(UploadHistoryEntry.self, from: data)
+
+        XCTAssertEqual(decoded.progress, entry.progress)
+        XCTAssertEqual(decoded, entry)
+    }
+
     func testDecodesLegacyUploadJSONWithoutDirectionOrLocalDisplayPaths() throws {
         let id = fixedUUID(0x13).uuidString.lowercased()
         let json = """
@@ -113,6 +133,7 @@ final class UploadHistoryEntryTests: XCTestCase {
         XCTAssertEqual(decoded.localDisplayPaths, [])
         XCTAssertEqual(decoded.localFileNames, ["demo.png"])
         XCTAssertEqual(decoded.remoteDisplayPaths, ["~/.agent-inbox/2026-06-15/demo.png"])
+        XCTAssertNil(decoded.progress)
         XCTAssertEqual(decoded.copyPayload, "~/.agent-inbox/2026-06-15/demo.png")
     }
 

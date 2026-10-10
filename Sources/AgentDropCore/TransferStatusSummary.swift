@@ -91,7 +91,8 @@ public extension TransferStatusSummary {
 
         let fileCount = entry.localFileNames.count
         let noun = fileCount == 1 ? "file" : "files"
-        return .progress("Uploading \(fileCount) \(noun) to \(entry.targetName)...")
+        let prefix = "Uploading \(fileCount) \(noun) to \(entry.targetName)"
+        return .progress(entry.progress?.displayText(prefix: prefix) ?? "\(prefix)...")
     }
 }
 

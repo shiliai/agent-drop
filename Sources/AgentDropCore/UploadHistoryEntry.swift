@@ -21,6 +21,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     public let remoteDisplayPaths: [String]
     public let localDisplayPaths: [String]
     public let errorMessage: String?
+    public let progress: TransferProgress?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -32,6 +33,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         case remoteDisplayPaths
         case localDisplayPaths
         case errorMessage
+        case progress
     }
 
     public init(
@@ -43,7 +45,8 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         localFileNames: [String],
         remoteDisplayPaths: [String],
         localDisplayPaths: [String] = [],
-        errorMessage: String?
+        errorMessage: String?,
+        progress: TransferProgress? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -54,6 +57,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         self.remoteDisplayPaths = remoteDisplayPaths
         self.localDisplayPaths = localDisplayPaths
         self.errorMessage = errorMessage
+        self.progress = progress
     }
 
     public init(from decoder: Decoder) throws {
@@ -67,6 +71,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         remoteDisplayPaths = try container.decode([String].self, forKey: .remoteDisplayPaths)
         localDisplayPaths = try container.decodeIfPresent([String].self, forKey: .localDisplayPaths) ?? []
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
+        progress = try container.decodeIfPresent(TransferProgress.self, forKey: .progress)
     }
 
     public var copyPayload: String? {
@@ -82,6 +87,21 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
             guard !localDisplayPaths.isEmpty else { return nil }
             return localDisplayPaths.joined(separator: "\n")
         }
+    }
+
+    public func updatingProgress(_ progress: TransferProgress?) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id,
+            createdAt: createdAt,
+            direction: direction,
+            targetName: targetName,
+            status: status,
+            localFileNames: localFileNames,
+            remoteDisplayPaths: remoteDisplayPaths,
+            localDisplayPaths: localDisplayPaths,
+            errorMessage: errorMessage,
+            progress: progress
+        )
     }
 
     public static func shortErrorMessage(from message: String) -> String {
