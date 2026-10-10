@@ -2,7 +2,7 @@ import Foundation
 
 public typealias TransferProgressHandler = @Sendable (TransferProgress) -> Void
 
-public struct TransferProgress: Equatable, Sendable {
+public struct TransferProgress: Codable, Equatable, Sendable {
     public let completedBytes: Int64
     public let fractionCompleted: Double?
     public let bytesPerSecond: Double?

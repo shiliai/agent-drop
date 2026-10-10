@@ -51,6 +51,27 @@ final class TransferStatusSummaryTests: XCTestCase {
         XCTAssertEqual(summary, .progress("Uploading 2 files to x570..."))
     }
 
+    func testRunningFinderUploadHistoryIncludesTransferProgress() {
+        let entry = UploadHistoryEntry.uploadStarted(
+            targetName: "x570",
+            fileURLs: [URL(fileURLWithPath: "/tmp/design.pdf")],
+            createdAt: Date(timeIntervalSince1970: 1_000)
+        ).updatingProgress(TransferProgress(
+            completedBytes: 1_024,
+            fractionCompleted: 0.5,
+            bytesPerSecond: 1_000_000,
+            estimatedTimeRemaining: 4
+        ))
+
+        let summary = TransferStatusSummary.runningUploadHistoryStatus(
+            from: [entry],
+            now: Date(timeIntervalSince1970: 1_060),
+            staleAfter: 1_800
+        )
+
+        XCTAssertEqual(summary, .progress("Uploading 1 file to x570 - 50% | 1 MB/s | ETA 4s"))
+    }
+
     func testNewestNonStaleRunningFinderUploadWins() {
         let older = UploadHistoryEntry.uploadStarted(
             targetName: "old",
