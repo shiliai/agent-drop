@@ -76,6 +76,7 @@ private struct TransferWindowView: View {
                 isAutoRefreshEnabled: isAutoRefreshEnabled,
                 lastUpdatedAt: lastUpdatedAt,
                 transferStatusSummary: transferStatusSummary,
+                activeFinderUploadEntry: activeFinderUploadEntry,
                 versionDisplay: AgentDropVersion.display
             )
             .padding(.horizontal, 12)
@@ -155,6 +156,11 @@ private struct TransferWindowView: View {
 
     private var selectedHistoryEntry: UploadHistoryEntry? {
         historyEntries.first { $0.id == selectedHistoryID } ?? historyEntries.first
+    }
+
+    private var activeFinderUploadEntry: UploadHistoryEntry? {
+        guard let activeFinderUploadID else { return nil }
+        return historyEntries.first { $0.id == activeFinderUploadID }
     }
 
     private var nonFinderTransferStatusSummary: Binding<TransferStatusSummary> {
@@ -1528,6 +1534,7 @@ private struct UploadHistoryStatusBar: View {
     let isAutoRefreshEnabled: Bool
     let lastUpdatedAt: Date?
     let transferStatusSummary: TransferStatusSummary
+    let activeFinderUploadEntry: UploadHistoryEntry?
     let versionDisplay: String
 
     var body: some View {
@@ -1557,7 +1564,15 @@ private struct UploadHistoryStatusBar: View {
     }
 
     private var statusText: String {
-        transferStatusSummary.statusText(lastUpdatedAt: lastUpdatedAt)
+        if let activeFinderUploadEntry,
+           let progress = activeFinderUploadEntry.progress {
+            let fileCount = activeFinderUploadEntry.localFileNames.count
+            let noun = fileCount == 1 ? "file" : "files"
+            return progress.displayText(
+                prefix: "Uploading \(fileCount) \(noun) to \(activeFinderUploadEntry.targetName)"
+            )
+        }
+        return transferStatusSummary.statusText(lastUpdatedAt: lastUpdatedAt)
     }
 
     private var statusColor: Color {
@@ -1628,6 +1643,9 @@ private struct UploadHistoryRow: View {
         case .running:
             if isStaleRunning {
                 return "Upload status unknown"
+            }
+            if let progress = entry.progress {
+                return progress.displayText(prefix: "\(entry.localFileNames.count) \(noun) uploading")
             }
             return "\(entry.localFileNames.count) \(noun) uploading"
         case .succeeded:
@@ -1709,6 +1727,10 @@ private struct UploadHistoryDetail: View {
                         .foregroundStyle(statusColor)
                 }
 
+                if entry.status == .running, let progress = entry.progress {
+                    TransferProgressStatusView(message: "Uploading", progress: progress)
+                }
+
                 if !entry.remoteDisplayPaths.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Remote Paths")
@@ -1782,7 +1804,13 @@ private struct UploadHistoryDetail: View {
     private var statusText: String {
         switch entry.status {
         case .running:
-            return isStaleRunning ? "Status Unknown" : "Uploading"
+            if isStaleRunning {
+                return "Status Unknown"
+            }
+            if let progress = entry.progress {
+                return progress.displayText(prefix: "Uploading")
+            }
+            return "Uploading"
         case .succeeded:
             return "Succeeded"
         case .failed:
