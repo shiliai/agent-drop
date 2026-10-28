@@ -12,7 +12,7 @@ public struct UploadedFile: Equatable, Sendable {
     }
 }
 
-public struct UploadSourceFile: Equatable, Sendable {
+public struct UploadSourceFile: Codable, Equatable, Sendable {
     public let sourceURL: URL
     public let remoteName: String
     public let localDisplayName: String
@@ -49,7 +49,8 @@ public final class UploadService {
         files: [URL],
         target: SSHTarget,
         copyToClipboard: Bool = true,
-        progress: TransferProgressHandler? = nil
+        progress: TransferProgressHandler? = nil,
+        cancellation: TransferCancellation? = nil
     ) throws -> [UploadedFile] {
         try upload(
             sources: files.map {
@@ -61,7 +62,8 @@ public final class UploadService {
             },
             target: target,
             copyToClipboard: copyToClipboard,
-            progress: progress
+            progress: progress,
+            cancellation: cancellation
         )
     }
 
@@ -69,14 +71,15 @@ public final class UploadService {
         sources: [UploadSourceFile],
         target: SSHTarget,
         copyToClipboard: Bool = true,
-        progress: TransferProgressHandler? = nil
+        progress: TransferProgressHandler? = nil,
+        cancellation: TransferCancellation? = nil
     ) throws -> [UploadedFile] {
-        try createRemoteDirectory(target: target)
+        try createRemoteDirectory(target: target, cancellation: cancellation)
 
         var uploaded: [UploadedFile] = []
 
         for source in sources {
-            let remoteName = try reserveRemoteName(for: source, target: target)
+            let remoteName = try reserveRemoteName(for: source, target: target, cancellation: cancellation)
             let relativePath = inboxPath.relativeDirectory + "/" + remoteName
             let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath) + (source.isDirectory ? "/" : "")
             let sourcePath = source.sourceURL.path + (source.isDirectory ? "/" : "")
@@ -84,7 +87,7 @@ public final class UploadService {
             let result = try runRsync(CommandInvocation(
                 executable: "/usr/bin/rsync",
                 arguments: ["-a", sourcePath, "\(target.connectName):\(commandPath)"]
-            ), progress: progress)
+            ), progress: progress, cancellation: cancellation)
 
             guard result.succeeded else {
                 removeReservedRemoteName(relativePath: relativePath, target: target, isDirectory: source.isDirectory)
@@ -109,7 +112,23 @@ public final class UploadService {
         return uploaded
     }
 
-    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?) throws -> CommandResult {
+    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?, cancellation: TransferCancellation?) throws -> CommandResult {
+        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
+            let lineProgress: (@Sendable (String) -> Void)?
+            if let handler = progress {
+                lineProgress = { line in
+                    if let parsed = RsyncProgressParser.parse(line) { handler(parsed) }
+                }
+            } else {
+                lineProgress = nil
+            }
+            return try cancellableRunner.run(
+                CommandInvocation(executable: invocation.executable, arguments: progress == nil ? invocation.arguments : ["--progress"] + invocation.arguments, standardInput: invocation.standardInput),
+                progress: lineProgress,
+                cancellation: cancellation
+            )
+        }
+
         guard let progress, let progressRunner = runner as? ProgressReportingCommandRunning else {
             return try runner.run(invocation)
         }
@@ -126,19 +145,19 @@ public final class UploadService {
         }
     }
 
-    private func createRemoteDirectory(target: SSHTarget) throws {
+    private func createRemoteDirectory(target: SSHTarget, cancellation: TransferCancellation?) throws {
         let commandPath = ShellQuoting.homeRelativeCommandPath(inboxPath.relativeDirectory)
-        let result = try runner.run(CommandInvocation(
+        let result = try run(CommandInvocation(
             executable: "/usr/bin/ssh",
             arguments: [target.connectName, "mkdir -p -- \(commandPath)"]
-        ))
+        ), cancellation: cancellation)
 
         guard result.succeeded else {
             throw UploadError.remoteDirectoryFailed(result.stderr)
         }
     }
 
-    private func reserveRemoteName(for source: UploadSourceFile, target: SSHTarget) throws -> String {
+    private func reserveRemoteName(for source: UploadSourceFile, target: SSHTarget, cancellation: TransferCancellation?) throws -> String {
         for candidate in RemoteNamePlanner(originalName: source.remoteName).candidates(prefixCount: 100) {
             let relativePath = inboxPath.relativeDirectory + "/" + candidate
             let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
@@ -147,10 +166,10 @@ public final class UploadService {
             } else {
                 "if ( set -C; : > \(commandPath) ) 2>/dev/null; then exit 0; fi; test -e \(commandPath) && exit 1; exit 2"
             }
-            let result = try runner.run(CommandInvocation(
+            let result = try run(CommandInvocation(
                 executable: "/usr/bin/ssh",
                 arguments: [target.connectName, reservationCommand]
-            ))
+            ), cancellation: cancellation)
 
             if result.exitCode == 0 {
                 return candidate
@@ -173,6 +192,13 @@ public final class UploadService {
             executable: "/usr/bin/ssh",
             arguments: [target.connectName, "rm \(removeFlag) -- \(commandPath)"]
         ))
+    }
+
+    private func run(_ invocation: CommandInvocation, cancellation: TransferCancellation?) throws -> CommandResult {
+        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
+            return try cancellableRunner.run(invocation, progress: nil, cancellation: cancellation)
+        }
+        return try runner.run(invocation)
     }
 
     private func clipboardFailureReason(from error: Error) -> String {

@@ -11,7 +11,7 @@ final class TransferNavigationStateTests: XCTestCase {
     }
 
     func testPullRouteSelectsTransferWithPullDirection() {
-        var state = TransferNavigationState(selectedSection: .history, transferMode: .drop)
+        var state = TransferNavigationState(selectedSection: .activity, transferMode: .drop)
 
         state.apply(.pull)
 
@@ -19,10 +19,10 @@ final class TransferNavigationStateTests: XCTestCase {
         XCTAssertEqual(state.transferMode, .pull)
     }
 
-    func testHistorySelectionDoesNotResetTransferDirection() {
+    func testActivitySelectionDoesNotResetTransferDirection() {
         var state = TransferNavigationState(selectedSection: .transfer, transferMode: .pull)
 
-        state.selectedSection = .history
+        state.selectedSection = .activity
         state.selectedSection = .transfer
 
         XCTAssertEqual(state.transferMode, .pull)
@@ -30,7 +30,7 @@ final class TransferNavigationStateTests: XCTestCase {
 
     func testSectionsDeclareStableContextColumnTitles() {
         XCTAssertEqual(AppSection.transfer.contextColumnTitle, "Hosts")
-        XCTAssertEqual(AppSection.history.contextColumnTitle, "Recent Transfers")
+        XCTAssertEqual(AppSection.activity.contextColumnTitle, "All Transfers")
     }
 
     func testSelectedTargetPersistsAcrossDirectionChanges() {

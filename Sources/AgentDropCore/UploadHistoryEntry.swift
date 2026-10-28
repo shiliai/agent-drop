@@ -10,6 +10,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         case running
         case succeeded
         case failed
+        case cancelled
     }
 
     public let id: UUID
@@ -22,6 +23,12 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     public let localDisplayPaths: [String]
     public let errorMessage: String?
     public let progress: TransferProgress?
+    public let retryRequest: TransferRequest?
+    public let startedAt: Date?
+    public let completedAt: Date?
+    public let totalBytes: Int64?
+    public let transferredBytes: Int64?
+    public let duration: TimeInterval?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -34,6 +41,12 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         case localDisplayPaths
         case errorMessage
         case progress
+        case retryRequest
+        case startedAt
+        case completedAt
+        case totalBytes
+        case transferredBytes
+        case duration
     }
 
     public init(
@@ -46,7 +59,13 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         remoteDisplayPaths: [String],
         localDisplayPaths: [String] = [],
         errorMessage: String?,
-        progress: TransferProgress? = nil
+        progress: TransferProgress? = nil,
+        retryRequest: TransferRequest? = nil,
+        startedAt: Date? = nil,
+        completedAt: Date? = nil,
+        totalBytes: Int64? = nil,
+        transferredBytes: Int64? = nil,
+        duration: TimeInterval? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -58,6 +77,12 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         self.localDisplayPaths = localDisplayPaths
         self.errorMessage = errorMessage
         self.progress = progress
+        self.retryRequest = retryRequest
+        self.startedAt = startedAt
+        self.completedAt = completedAt
+        self.totalBytes = totalBytes
+        self.transferredBytes = transferredBytes
+        self.duration = duration
     }
 
     public init(from decoder: Decoder) throws {
@@ -72,6 +97,12 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         localDisplayPaths = try container.decodeIfPresent([String].self, forKey: .localDisplayPaths) ?? []
         errorMessage = try container.decodeIfPresent(String.self, forKey: .errorMessage)
         progress = try container.decodeIfPresent(TransferProgress.self, forKey: .progress)
+        retryRequest = try container.decodeIfPresent(TransferRequest.self, forKey: .retryRequest)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        totalBytes = try container.decodeIfPresent(Int64.self, forKey: .totalBytes)
+        transferredBytes = try container.decodeIfPresent(Int64.self, forKey: .transferredBytes)
+        duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration)
     }
 
     public var copyPayload: String? {
@@ -89,6 +120,13 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    public var resolvedRetryRequest: TransferRequest? {
+        if let retryRequest { return retryRequest }
+        guard direction == .download,
+              let paths = try? RemotePathParser.parse(remoteDisplayPaths.joined(separator: "\n")) else { return nil }
+        return .download(target: SSHTarget(name: targetName, source: .config), paths: paths)
+    }
+
     public func updatingProgress(_ progress: TransferProgress?) -> UploadHistoryEntry {
         UploadHistoryEntry(
             id: id,
@@ -100,8 +138,59 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
             remoteDisplayPaths: remoteDisplayPaths,
             localDisplayPaths: localDisplayPaths,
             errorMessage: errorMessage,
-            progress: progress
+            progress: progress,
+            retryRequest: retryRequest,
+            startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes,
+            transferredBytes: canMeasureLiveBytes && status == .running ? (progress?.completedBytes ?? transferredBytes) : transferredBytes,
+            duration: duration
         )
+    }
+
+    public func withRetryRequest(_ request: TransferRequest) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id, createdAt: createdAt, direction: direction, targetName: targetName,
+            status: status, localFileNames: localFileNames, remoteDisplayPaths: remoteDisplayPaths,
+            localDisplayPaths: localDisplayPaths, errorMessage: errorMessage, progress: progress,
+            retryRequest: request,
+            startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes, transferredBytes: transferredBytes, duration: duration
+        )
+    }
+
+    public func withStatus(_ status: Status, errorMessage: String?) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id, createdAt: createdAt, direction: direction, targetName: targetName,
+            status: status, localFileNames: localFileNames, remoteDisplayPaths: remoteDisplayPaths,
+            localDisplayPaths: localDisplayPaths, errorMessage: errorMessage, progress: progress,
+            retryRequest: retryRequest, startedAt: startedAt, completedAt: completedAt,
+            totalBytes: totalBytes, transferredBytes: transferredBytes, duration: duration
+        )
+    }
+
+    public func withMetrics(startedAt: Date?, completedAt: Date? = nil, totalBytes: Int64?, transferredBytes: Int64? = nil) -> UploadHistoryEntry {
+        UploadHistoryEntry(
+            id: id, createdAt: createdAt, direction: direction, targetName: targetName, status: status,
+            localFileNames: localFileNames, remoteDisplayPaths: remoteDisplayPaths, localDisplayPaths: localDisplayPaths,
+            errorMessage: errorMessage, progress: progress, retryRequest: retryRequest,
+            startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes, transferredBytes: transferredBytes,
+            duration: startedAt.flatMap { start in completedAt.map { $0.timeIntervalSince(start) } }
+        )
+    }
+
+    public func averageBytesPerSecond(now: Date = Date()) -> Double? {
+        guard let startedAt, let transferredBytes, transferredBytes >= 0 else { return nil }
+        let elapsed: TimeInterval
+        if let completedAt {
+            elapsed = duration ?? completedAt.timeIntervalSince(startedAt)
+        } else {
+            elapsed = now.timeIntervalSince(startedAt)
+        }
+        guard elapsed > 0, elapsed.isFinite else { return nil }
+        return Double(transferredBytes) / elapsed
+    }
+
+    private var canMeasureLiveBytes: Bool {
+        guard case let .upload(_, sources) = retryRequest else { return false }
+        return sources.count == 1 && !sources[0].isDirectory
     }
 
     public static func shortErrorMessage(from message: String) -> String {

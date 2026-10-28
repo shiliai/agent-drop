@@ -1,5 +1,51 @@
 import Foundation
 
+/// Coordinates cancellation of one or more child processes belonging to a transfer.
+public final class TransferCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var processes: [ObjectIdentifier: Process] = [:]
+
+    public init() {}
+
+    public var isCancelled: Bool {
+        lock.withLock { cancelled }
+    }
+
+    public func cancel() {
+        let processesToTerminate: [Process] = lock.withLock {
+            cancelled = true
+            return Array(processes.values)
+        }
+        for process in processesToTerminate where process.isRunning {
+            process.terminate()
+        }
+    }
+
+    fileprivate func register(_ process: Process) {
+        let shouldTerminate = lock.withLock { () -> Bool in
+            if cancelled { return true }
+            processes[ObjectIdentifier(process)] = process
+            return false
+        }
+        if shouldTerminate, process.isRunning {
+            process.terminate()
+        }
+    }
+
+    fileprivate func unregister(_ process: Process) {
+        _ = lock.withLock { processes.removeValue(forKey: ObjectIdentifier(process)) }
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return body()
+    }
+}
+
 public struct CommandInvocation: Equatable, Sendable {
     public let executable: String
     public let arguments: [String]
@@ -39,11 +85,27 @@ public protocol ProgressReportingCommandRunning: CommandRunning {
     ) throws -> CommandResult
 }
 
+public protocol CancellableProgressReportingCommandRunning: ProgressReportingCommandRunning {
+    func run(
+        _ invocation: CommandInvocation,
+        progress: (@Sendable (String) -> Void)?,
+        cancellation: TransferCancellation?
+    ) throws -> CommandResult
+}
+
 public protocol CommandPiping {
     func runPipeline(stdoutOf producer: CommandInvocation, intoStdinOf consumer: CommandInvocation) throws -> CommandResult
 }
 
-public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunning, CommandPiping {
+public protocol CancellableCommandPiping: CommandPiping {
+    func runPipeline(
+        stdoutOf producer: CommandInvocation,
+        intoStdinOf consumer: CommandInvocation,
+        cancellation: TransferCancellation?
+    ) throws -> CommandResult
+}
+
+public struct ProcessCommandRunner: Sendable, CommandRunning, ProgressReportingCommandRunning, CancellableProgressReportingCommandRunning, CommandPiping, CancellableCommandPiping {
     private let environment: [String: String]?
 
     public init(environment: [String: String]? = nil) {
@@ -51,6 +113,21 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
     }
 
     public func run(_ invocation: CommandInvocation) throws -> CommandResult {
+        try run(invocation, progress: nil, cancellation: nil)
+    }
+
+    public func run(_ invocation: CommandInvocation, cancellation: TransferCancellation?) throws -> CommandResult {
+        try run(invocation, progress: nil, cancellation: cancellation)
+    }
+
+    public func run(
+        _ invocation: CommandInvocation,
+        progress: (@Sendable (String) -> Void)?,
+        cancellation: TransferCancellation?
+    ) throws -> CommandResult {
+        if let progress {
+            return try runWithProgress(invocation, progress: progress, cancellation: cancellation)
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: invocation.executable)
         process.arguments = invocation.arguments
@@ -67,6 +144,8 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
         }
 
         try process.run()
+        cancellation?.register(process)
+        defer { cancellation?.unregister(process) }
 
         let stdoutCapture = ProcessOutputCapture()
         let stderrCapture = ProcessOutputCapture()
@@ -109,6 +188,15 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
             return try run(invocation)
         }
 
+        return try runWithProgress(invocation, progress: progress, cancellation: nil)
+    }
+
+    private func runWithProgress(
+        _ invocation: CommandInvocation,
+        progress: @escaping @Sendable (String) -> Void,
+        cancellation: TransferCancellation?
+    ) throws -> CommandResult {
+
         let process = Process()
         process.executableURL = URL(fileURLWithPath: invocation.executable)
         process.arguments = invocation.arguments
@@ -125,6 +213,8 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
         }
 
         try process.run()
+        cancellation?.register(process)
+        defer { cancellation?.unregister(process) }
 
         let stdoutCapture = ProcessOutputCapture()
         let stderrCapture = ProcessOutputCapture()
@@ -150,6 +240,14 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
     }
 
     public func runPipeline(stdoutOf producerInvocation: CommandInvocation, intoStdinOf consumerInvocation: CommandInvocation) throws -> CommandResult {
+        try runPipeline(stdoutOf: producerInvocation, intoStdinOf: consumerInvocation, cancellation: nil)
+    }
+
+    public func runPipeline(
+        stdoutOf producerInvocation: CommandInvocation,
+        intoStdinOf consumerInvocation: CommandInvocation,
+        cancellation: TransferCancellation?
+    ) throws -> CommandResult {
         let producer = Process()
         producer.executableURL = URL(fileURLWithPath: producerInvocation.executable)
         producer.arguments = producerInvocation.arguments
@@ -178,7 +276,9 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
 
         do {
             try consumer.run()
+            cancellation?.register(consumer)
             try producer.run()
+            cancellation?.register(producer)
         } catch {
             if producer.isRunning {
                 producer.terminate()
@@ -194,6 +294,11 @@ public struct ProcessCommandRunner: CommandRunning, ProgressReportingCommandRunn
             try? consumerStdout.fileHandleForReading.close()
             try? consumerStderr.fileHandleForReading.close()
             throw error
+        }
+
+        defer {
+            cancellation?.unregister(producer)
+            cancellation?.unregister(consumer)
         }
 
         let producerStderrCapture = ProcessOutputCapture()

@@ -16,4 +16,10 @@ public struct AsyncUploadHistoryStore: Sendable {
             try store.append(entry)
         }.value
     }
+
+    public func upsert(_ entry: UploadHistoryEntry) async throws {
+        try await Task.detached(priority: .utility) {
+            try store.upsert(entry)
+        }.value
+    }
 }

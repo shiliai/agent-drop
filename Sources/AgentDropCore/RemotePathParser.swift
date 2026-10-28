@@ -1,6 +1,6 @@
 import Foundation
 
-public struct RemotePath: Equatable, Sendable {
+public struct RemotePath: Codable, Equatable, Sendable {
     public let hostHint: String?
     public let path: String
 

@@ -1,10 +1,14 @@
 import Foundation
 
 public enum ClipboardImageStager {
+    public static var defaultBaseDirectory: URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("AgentDropClipboard", isDirectory: true)
+    }
+
     public static func stage(
         pngData: Data,
         imageDrop: ClipboardImageDrop,
-        baseDirectory: URL = FileManager.default.temporaryDirectory.appendingPathComponent("AgentDropClipboard", isDirectory: true),
+        baseDirectory: URL = defaultBaseDirectory,
         directoryName: String = UUID().uuidString,
         fileManager: FileManager = .default
     ) throws -> StagedUpload {
@@ -26,5 +30,12 @@ public enum ClipboardImageStager {
             try? fileManager.removeItem(at: directory)
             throw error
         }
+    }
+
+    public static func cleanupAfterSuccessfulUpload(_ sourceURL: URL) {
+        let directory = sourceURL.deletingLastPathComponent().standardizedFileURL
+        guard directory.deletingLastPathComponent() == defaultBaseDirectory.standardizedFileURL,
+              UUID(uuidString: directory.lastPathComponent) != nil else { return }
+        try? FileManager.default.removeItem(at: directory)
     }
 }
