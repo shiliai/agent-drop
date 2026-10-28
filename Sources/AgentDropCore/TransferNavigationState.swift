@@ -2,14 +2,14 @@ import Foundation
 
 public enum AppSection: String, Equatable, Sendable {
     case transfer
-    case history
+    case activity
 
     public var contextColumnTitle: String {
         switch self {
         case .transfer:
             return "Hosts"
-        case .history:
-            return "Recent Transfers"
+        case .activity:
+            return "All Transfers"
         }
     }
 }

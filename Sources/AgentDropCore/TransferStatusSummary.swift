@@ -171,6 +171,10 @@ public enum FinderUploadStatusResolver {
                 resolvedStatus = .failure(
                     completedEntry.errorMessage ?? "Upload to \(completedEntry.targetName) failed."
                 )
+            case .cancelled:
+                resolvedStatus = .failure(
+                    completedEntry.errorMessage ?? "Upload to \(completedEntry.targetName) was cancelled."
+                )
             case .running:
                 resolvedStatus = .idle
             }

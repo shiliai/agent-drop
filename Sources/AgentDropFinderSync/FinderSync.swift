@@ -88,55 +88,62 @@ final class FinderSync: FIFinderSync {
             }
 
             let target = SSHTarget(name: connectName, connectName: connectName, source: .config)
-            let transferID = UUID()
-            let startedAt = Date()
-            let startedEntry = UploadHistoryEntry.uploadStarted(
-                id: transferID,
-                targetName: target.name,
-                fileURLs: selection.files,
-                createdAt: startedAt
-            )
-            Self.upsertHistory(startedEntry, store: historyStore)
-
-            do {
-                Self.recordDiagnostic("upload start target=\(target.connectName) files=\(selection.files.map(\.lastPathComponent).joined(separator: ", "))")
-                let staged = try UploadStager.stage(files: selection.files)
-                defer { try? staged.cleanup() }
-                Self.recordDiagnostic("upload staged target=\(target.connectName) directory=\(staged.directory.path) files=\(staged.files.map(\.sourceURL.lastPathComponent).joined(separator: ", "))")
-                let uploaded = try UploadService(runner: self.runner).upload(
-                    sources: staged.files,
-                    target: target,
-                    copyToClipboard: false,
-                    progress: { progress in
-                        Self.upsertHistory(startedEntry.updatingProgress(progress), store: historyStore)
-                    }
-                )
-                let entry = UploadHistoryEntry.succeeded(
-                    targetName: target.name,
-                    uploadedFiles: uploaded,
-                    createdAt: startedAt,
-                    id: transferID
-                )
-                Self.upsertHistory(entry, store: historyStore)
-                let remotePaths = uploaded.map(\.remoteDisplayPath).joined(separator: "\n")
-                let copied = Self.copyToPasteboard(remotePaths)
-                let body = UploadFeedbackFormatter.success(fileCount: uploaded.count, targetName: target.name, copiedPaths: copied)
-                Self.recordDiagnostic("upload success target=\(target.connectName) count=\(uploaded.count) clipboard=\(copied) paths=\(remotePaths.replacingOccurrences(of: "\n", with: " | "))")
-                Self.markFiles(selection.files, badgeIdentifier: successBadgeIdentifier)
-                Self.notify(title: copied ? "Agent Drop" : "Agent Drop uploaded", body: body)
-            } catch {
-                Self.recordDiagnostic("upload failed target=\(target.connectName) error=\(String(describing: error))")
-                let entry = UploadHistoryEntry.failed(
-                    targetName: target.name,
-                    fileURLs: selection.files,
-                    errorDescription: String(describing: error),
-                    createdAt: startedAt,
-                    id: transferID
-                )
-                Self.upsertHistory(entry, store: historyStore)
-                Self.markFiles(selection.files, badgeIdentifier: failureBadgeIdentifier)
-                Self.notify(title: "Agent Drop failed", body: UploadFeedbackFormatter.failure(targetName: target.name, errorDescription: String(describing: error)))
+            let requests = selection.files.map { file in
+                TransferRequest.upload(target: target, sources: [UploadSourceFile(
+                    sourceURL: file,
+                    remoteName: file.lastPathComponent,
+                    isDirectory: (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+                )])
             }
+            let entries = requests.map { $0.entry(id: UUID(), createdAt: Date(), status: .running) }
+            for entry in entries { Self.upsertHistory(entry, store: historyStore) }
+            var allUploaded: [UploadedFile] = []
+            var failureCount = 0
+            for (index, file) in selection.files.enumerated() {
+                let startedEntry = entries[index].withMetrics(
+                    startedAt: Date(), totalBytes: TransferFileSize.byteCount(of: [file])
+                )
+                Self.upsertHistory(startedEntry, store: historyStore)
+                let request = requests[index]
+                do {
+                    let staged = try UploadStager.stage(files: [file])
+                    defer { try? staged.cleanup() }
+                    let uploaded = try UploadService(runner: self.runner).upload(
+                        sources: staged.files, target: target, copyToClipboard: false,
+                        progress: { progress in
+                            Self.upsertHistory(startedEntry.updatingProgress(progress), store: historyStore)
+                        }
+                    )
+                    let entry = UploadHistoryEntry.succeeded(
+                        targetName: target.name, uploadedFiles: uploaded,
+                        createdAt: startedEntry.createdAt, id: startedEntry.id
+                    ).withRetryRequest(request).withMetrics(
+                        startedAt: startedEntry.startedAt, completedAt: Date(),
+                        totalBytes: startedEntry.totalBytes, transferredBytes: startedEntry.totalBytes
+                    )
+                    Self.upsertHistory(entry, store: historyStore)
+                    allUploaded.append(contentsOf: uploaded)
+                    Self.markFiles([file], badgeIdentifier: successBadgeIdentifier)
+                } catch {
+                    failureCount += 1
+                    let entry = request.entry(
+                        id: startedEntry.id, createdAt: startedEntry.createdAt, status: .failed,
+                        error: CLIErrorFormatter.message(for: error)
+                    ).withMetrics(startedAt: startedEntry.startedAt, completedAt: Date(), totalBytes: startedEntry.totalBytes)
+                    Self.upsertHistory(entry, store: historyStore)
+                    Self.markFiles([file], badgeIdentifier: failureBadgeIdentifier)
+                    Self.recordDiagnostic("upload failed target=\(target.connectName) error=\(String(describing: error))")
+                }
+            }
+            let copied = !allUploaded.isEmpty && Self.copyToPasteboard(allUploaded.map(\.remoteDisplayPath).joined(separator: "\n"))
+            if failureCount > 0 {
+                Self.notify(title: "Agent Drop failed", body: "\(failureCount) transfers failed; \(allUploaded.count) completed. Retry failed transfers in Agent Drop.")
+            } else {
+                Self.notify(title: copied ? "Agent Drop" : "Agent Drop uploaded", body: UploadFeedbackFormatter.success(
+                    fileCount: allUploaded.count, targetName: target.name, copiedPaths: copied
+                ))
+            }
+
         }
     }
 

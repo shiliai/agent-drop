@@ -51,7 +51,8 @@ public final class DownloadService {
         target: SSHTarget,
         destinationRoot: URL? = nil,
         copyToClipboard: Bool = true,
-        progress: TransferProgressHandler? = nil
+        progress: TransferProgressHandler? = nil,
+        cancellation: TransferCancellation? = nil
     ) throws -> [DownloadedFile] {
         guard !remotePaths.isEmpty else {
             throw DownloadError.noRemotePaths
@@ -62,7 +63,7 @@ public final class DownloadService {
 
         for remotePath in remotePaths {
             try validate(remotePath: remotePath, target: target)
-            let remoteKind = try inspect(remotePath: remotePath.path, target: target)
+            let remoteKind = try inspect(remotePath: remotePath.path, target: target, cancellation: cancellation)
             let localKind = localDestinationKind(for: remoteKind)
             let reserved: ReservedLocalDestination
 
@@ -88,7 +89,7 @@ public final class DownloadService {
                     reservedDestination: reserved,
                     progress: progress
                 )
-                try execute(plan, remotePath: remotePath.path, target: target, progress: progress)
+                try execute(plan, remotePath: remotePath.path, target: target, progress: progress, cancellation: cancellation)
                 downloaded.append(DownloadedFile(
                     remotePath: remotePath.path,
                     localURL: reserved.url,
@@ -141,8 +142,14 @@ public final class DownloadService {
         path.hasPrefix("~/") || path.hasPrefix("/")
     }
 
-    private func inspect(remotePath: String, target: SSHTarget) throws -> RemotePathKind {
-        let result = try runner.run(DownloadTransferPlanner.remoteInspectionCommand(target: target, remotePath: remotePath))
+    private func inspect(remotePath: String, target: SSHTarget, cancellation: TransferCancellation?) throws -> RemotePathKind {
+        let invocation = DownloadTransferPlanner.remoteInspectionCommand(target: target, remotePath: remotePath)
+        let result: CommandResult
+        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
+            result = try cancellableRunner.run(invocation, progress: nil, cancellation: cancellation)
+        } else {
+            result = try runner.run(invocation)
+        }
         guard result.succeeded else {
             throw DownloadError.remoteInspectionFailed(failureMessage(
                 target: target,
@@ -194,11 +201,12 @@ public final class DownloadService {
         _ plan: DownloadTransferPlan,
         remotePath: String,
         target: SSHTarget,
-        progress: TransferProgressHandler?
+        progress: TransferProgressHandler?,
+        cancellation: TransferCancellation?
     ) throws {
         switch plan.execution {
         case let .command(invocation):
-            let result = try runRsync(invocation, progress: progress)
+            let result = try runRsync(invocation, progress: progress, cancellation: cancellation)
             guard result.succeeded else {
                 throw DownloadError.rsyncFailed(failureMessage(
                     target: target,
@@ -209,7 +217,16 @@ public final class DownloadService {
                 ))
             }
         case let .pipeline(remoteArchiveInvocation, localExtractInvocation):
-            let result = try pipelineRunner.runPipeline(stdoutOf: remoteArchiveInvocation, intoStdinOf: localExtractInvocation)
+            let result: CommandResult
+            if let cancellablePipeline = pipelineRunner as? CancellableCommandPiping {
+                result = try cancellablePipeline.runPipeline(
+                    stdoutOf: remoteArchiveInvocation,
+                    intoStdinOf: localExtractInvocation,
+                    cancellation: cancellation
+                )
+            } else {
+                result = try pipelineRunner.runPipeline(stdoutOf: remoteArchiveInvocation, intoStdinOf: localExtractInvocation)
+            }
             guard result.succeeded else {
                 throw DownloadError.tarFailed(failureMessage(
                     target: target,
@@ -222,7 +239,23 @@ public final class DownloadService {
         }
     }
 
-    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?) throws -> CommandResult {
+    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?, cancellation: TransferCancellation?) throws -> CommandResult {
+        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
+            let lineProgress: (@Sendable (String) -> Void)?
+            if let handler = progress {
+                lineProgress = { line in
+                    if let parsed = RsyncProgressParser.parse(line) { handler(parsed) }
+                }
+            } else {
+                lineProgress = nil
+            }
+            return try cancellableRunner.run(
+                CommandInvocation(executable: invocation.executable, arguments: progress == nil ? invocation.arguments : ["--progress"] + invocation.arguments, standardInput: invocation.standardInput),
+                progress: lineProgress,
+                cancellation: cancellation
+            )
+        }
+
         guard let progress, let progressRunner = runner as? ProgressReportingCommandRunning else {
             return try runner.run(invocation)
         }

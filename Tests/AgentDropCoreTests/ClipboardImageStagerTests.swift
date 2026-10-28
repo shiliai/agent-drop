@@ -2,6 +2,25 @@ import XCTest
 @testable import AgentDropCore
 
 final class ClipboardImageStagerTests: XCTestCase {
+    func testSuccessfulUploadCleanupRemovesOnlyOwnedImageStaging() throws {
+        let staged = try ClipboardImageStager.stage(
+            pngData: Data([1, 2, 3]),
+            imageDrop: ClipboardImageDrop(remoteName: "image.png", localDisplayName: "image.png")
+        )
+        defer { try? staged.cleanup() }
+        ClipboardImageStager.cleanupAfterSuccessfulUpload(staged.files[0].sourceURL)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staged.directory.path))
+    }
+
+    func testSuccessfulUploadCleanupDoesNotRemoveUserSelectedSourceDirectory() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("original.png")
+        try Data([1, 2, 3]).write(to: file)
+        ClipboardImageStager.cleanupAfterSuccessfulUpload(file)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testStagesImageBytesAsUploadSource() throws {
         let root = try makeTemporaryDirectory()
         let bytes = Data([0x89, 0x50, 0x4E, 0x47])

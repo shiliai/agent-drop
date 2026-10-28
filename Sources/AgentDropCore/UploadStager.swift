@@ -1,6 +1,6 @@
 import Foundation
 
-public struct StagedUpload: Equatable {
+public struct StagedUpload: Equatable, Sendable {
     public let directory: URL
     public let files: [UploadSourceFile]
 

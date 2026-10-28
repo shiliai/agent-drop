@@ -3,6 +3,26 @@ import XCTest
 @testable import AgentDropCore
 
 final class CommandRunnerTests: XCTestCase {
+    func testCancellationTerminatesRunningProcessAndReturnsPromptly() throws {
+        let cancellation = TransferCancellation()
+        let runner = ProcessCommandRunner()
+        let finished = expectation(description: "command finished")
+        let resultBox = CommandResultBox()
+        DispatchQueue.global(qos: .userInitiated).async {
+            resultBox.value = try? runner.run(
+                CommandInvocation(executable: "/usr/bin/perl", arguments: ["-e", "sleep 10"]),
+                progress: nil,
+                cancellation: cancellation
+            )
+            finished.fulfill()
+        }
+
+        Thread.sleep(forTimeInterval: 0.15)
+        cancellation.cancel()
+        wait(for: [finished], timeout: 2)
+        XCTAssertNotEqual(resultBox.value?.exitCode, 0)
+    }
+
     func testStreamsBothOutputsBeforeExitAndPreservesFailureDiagnostics() throws {
         let root = try makeCommandRunnerTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -172,6 +192,24 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 7)
         XCTAssertEqual(result.stdout, "")
         XCTAssertTrue(result.stderr.contains("consumer failed"))
+    }
+}
+
+private final class CommandResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: CommandResult?
+
+    var value: CommandResult? {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ body: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return body()
     }
 }
 
