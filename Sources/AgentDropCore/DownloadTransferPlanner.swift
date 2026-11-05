@@ -42,8 +42,8 @@ public enum DownloadTransferPlanner {
         switch kind {
         case .file:
             return .rsyncFile
-        case let .directory(fileCount):
-            return fileCount > tarFileCountThreshold ? .tarStream : .rsyncDirectory
+        case .directory:
+            return .rsyncDirectory
         }
     }
 
@@ -75,14 +75,14 @@ public enum DownloadTransferPlanner {
     public static func rsyncFileCommand(target: SSHTarget, remotePath: String, localURL: URL) -> CommandInvocation {
         CommandInvocation(
             executable: "/usr/bin/rsync",
-            arguments: ["-a", "\(target.connectName):\(remoteShellPath(remotePath))", localURL.path]
+            arguments: TransferIntegrity.rsyncOptions + ["\(target.connectName):\(remoteShellPath(remotePath))", localURL.path]
         )
     }
 
     public static func rsyncDirectoryCommand(target: SSHTarget, remotePath: String, localURL: URL) -> CommandInvocation {
         CommandInvocation(
             executable: "/usr/bin/rsync",
-            arguments: ["-a", "\(target.connectName):\(remoteShellPath(remotePath))/", localURL.path + "/"]
+            arguments: TransferIntegrity.rsyncOptions + ["\(target.connectName):\(remoteShellPath(remotePath))/", localURL.path + "/"]
         )
     }
 

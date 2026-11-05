@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct DownloadedFile: Equatable, Sendable {
@@ -5,12 +6,14 @@ public struct DownloadedFile: Equatable, Sendable {
     public let localURL: URL
     public let localDisplayPath: String
     public let strategy: DownloadTransferStrategy
+    public let wasSkipped: Bool
 
-    public init(remotePath: String, localURL: URL, localDisplayPath: String, strategy: DownloadTransferStrategy) {
+    public init(remotePath: String, localURL: URL, localDisplayPath: String, strategy: DownloadTransferStrategy, wasSkipped: Bool = false) {
         self.remotePath = remotePath
         self.localURL = localURL
         self.localDisplayPath = localDisplayPath
         self.strategy = strategy
+        self.wasSkipped = wasSkipped
     }
 }
 
@@ -65,41 +68,47 @@ public final class DownloadService {
             try validate(remotePath: remotePath, target: target)
             let remoteKind = try inspect(remotePath: remotePath.path, target: target, cancellation: cancellation)
             let localKind = localDestinationKind(for: remoteKind)
-            let reserved: ReservedLocalDestination
+            let fingerprint = try TransferIntegrity.remoteFingerprint(remotePath.path, target: target, runner: runner, cancellation: cancellation)
+            let basename = (remotePath.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) as NSString).lastPathComponent
+            guard !["", ".", "..", "~"].contains(basename), remotePath.path != "/" else {
+                throw DownloadError.unsupportedRemotePath(remotePath.path)
+            }
+            if let existing = try matchingLocalPath(root: root, basename: basename, fingerprint: fingerprint, cancellation: cancellation) {
+                downloaded.append(DownloadedFile(remotePath: remotePath.path, localURL: existing, localDisplayPath: existing.path,
+                                                 strategy: DownloadTransferPlanner.strategy(for: remoteKind), wasSkipped: true))
+                continue
+            }
 
+            let key = TransferIntegrity.identifier([target.connectName, remotePath.path, fingerprint])
+            let workspace = root.appendingPathComponent(".agent-drop-partial/" + key, isDirectory: true)
+            let workspaceLock = try TransferWorkspaceLock(directory: workspace)
+            defer { withExtendedLifetime(workspaceLock) {} }
+            let payload = workspace.appendingPathComponent("payload", isDirectory: localKind == .directory)
+            if localKind == .directory { try fileManager.createDirectory(at: payload, withIntermediateDirectories: true) }
+            let staging = ReservedLocalDestination(url: payload, kind: localKind)
+
+            let plan = DownloadTransferPlanner.plan(target: target, remotePath: remotePath.path, kind: remoteKind, reservedDestination: staging)
+            try execute(plan, remotePath: remotePath.path, target: target, progress: progress, cancellation: cancellation)
+            try TransferIntegrity.checkCancellation(cancellation)
+            guard try TransferIntegrity.localFingerprint(payload, cancellation: cancellation) == fingerprint else {
+                throw TransferIntegrityError.checksumMismatch(remotePath.path)
+            }
+            // Recheck the source so a changing file cannot be published as complete.
+            guard try TransferIntegrity.remoteFingerprint(remotePath.path, target: target, runner: runner, cancellation: cancellation) == fingerprint else {
+                throw TransferIntegrityError.checksumMismatch(remotePath.path)
+            }
+            let reserved: ReservedLocalDestination
             do {
                 reserved = try destinationPlanner.reserve(root: root, remotePath: remotePath.path, kind: localKind)
             } catch let error as LocalDestinationPlannerError {
                 throw destinationReservationError(from: error)
-            } catch {
-                throw DownloadError.destinationReservationFailed(String(describing: error))
             }
-
-            do {
-                let plannedTransfer = DownloadTransferPlanner.plan(
-                    target: target,
-                    remotePath: remotePath.path,
-                    kind: remoteKind,
-                    reservedDestination: reserved
-                )
-                let plan = progressEnabledPlan(
-                    plannedTransfer,
-                    target: target,
-                    remotePath: remotePath.path,
-                    reservedDestination: reserved,
-                    progress: progress
-                )
-                try execute(plan, remotePath: remotePath.path, target: target, progress: progress, cancellation: cancellation)
-                downloaded.append(DownloadedFile(
-                    remotePath: remotePath.path,
-                    localURL: reserved.url,
-                    localDisplayPath: reserved.url.path,
-                    strategy: plan.strategy
-                ))
-            } catch {
+            guard rename(payload.path, reserved.url.path) == 0 else {
+                let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
                 try? reserved.cleanup(fileManager: fileManager)
                 throw error
             }
+            downloaded.append(DownloadedFile(remotePath: remotePath.path, localURL: reserved.url, localDisplayPath: reserved.url.path, strategy: plan.strategy))
         }
 
         if copyToClipboard {
@@ -111,6 +120,15 @@ public final class DownloadService {
         }
 
         return downloaded
+    }
+
+    private func matchingLocalPath(root: URL, basename: String, fingerprint: String, cancellation: TransferCancellation?) throws -> URL? {
+        for name in LocalNamePlanner(originalName: basename).candidates(prefixCount: 100) {
+            let url = root.appendingPathComponent(name)
+            guard fileManager.fileExists(atPath: url.path) || (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) != nil else { continue }
+            if try TransferIntegrity.localFingerprint(url, cancellation: cancellation) == fingerprint { return url }
+        }
+        return nil
     }
 
     public static func defaultDestinationRoot(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
@@ -144,12 +162,7 @@ public final class DownloadService {
 
     private func inspect(remotePath: String, target: SSHTarget, cancellation: TransferCancellation?) throws -> RemotePathKind {
         let invocation = DownloadTransferPlanner.remoteInspectionCommand(target: target, remotePath: remotePath)
-        let result: CommandResult
-        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
-            result = try cancellableRunner.run(invocation, progress: nil, cancellation: cancellation)
-        } else {
-            result = try runner.run(invocation)
-        }
+        let result = try TransferIntegrity.run(invocation, runner: runner, cancellation: cancellation)
         guard result.succeeded else {
             throw DownloadError.remoteInspectionFailed(failureMessage(
                 target: target,
@@ -270,26 +283,6 @@ public final class DownloadService {
                 progress(parsed)
             }
         }
-    }
-
-    private func progressEnabledPlan(
-        _ plan: DownloadTransferPlan,
-        target: SSHTarget,
-        remotePath: String,
-        reservedDestination: ReservedLocalDestination,
-        progress: TransferProgressHandler?
-    ) -> DownloadTransferPlan {
-        guard progress != nil, plan.strategy == .tarStream else { return plan }
-        return DownloadTransferPlan(
-            strategy: .rsyncDirectory,
-            execution: .command(
-                DownloadTransferPlanner.rsyncDirectoryCommand(
-                    target: target,
-                    remotePath: remotePath,
-                    localURL: reservedDestination.url
-                )
-            )
-        )
     }
 
     private func failureMessage(

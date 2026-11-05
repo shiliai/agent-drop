@@ -3,6 +3,26 @@ import XCTest
 
 final class TransferQueueTests: XCTestCase {
     @MainActor
+    func testSkippedTransferPersistsZeroTransferredBytesAndCopyablePath() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        try FileManager.default.createDirectory(at: fixture.root, withIntermediateDirectories: true)
+        let source = fixture.root.appendingPathComponent("source.dat")
+        try Data("abc".utf8).write(to: source)
+        let queue = TransferQueue(store: fixture.store, execute: { _, _ in
+            .uploaded([UploadedFile(localURL: source, remoteDisplayPath: "~/source.dat", wasSkipped: true)])
+        }, copyPaths: { _ in true })
+        queue.enqueue([.upload(target: SSHTarget(name: "test", source: .config), sources: [UploadSourceFile(sourceURL: source, remoteName: "source.dat")])])
+        try await eventually { queue.activeCount == 0 }
+        await queue.waitForPersistence()
+        let saved = try await fixture.store.load()
+        XCTAssertEqual(saved.first?.skippedCount, 1)
+        XCTAssertEqual(saved.first?.totalBytes, 3)
+        XCTAssertEqual(saved.first?.transferredBytes, 0)
+        XCTAssertEqual(saved.first?.copyPayload, "~/source.dat")
+    }
+
+    @MainActor
     func testConcurrentTransfersKeepIndependentProgressAndBoundConcurrency() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }

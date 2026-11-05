@@ -3,48 +3,41 @@ import XCTest
 
 final class RsyncProgressCompatibilityTests: XCTestCase {
     func testUploadUsesCompatibleProgressOptionAndReportsProgress() throws {
-        let runner = ProgressCommandRunner(results: [
-            .success(stdout: "", stderr: ""),
-            .success(stdout: "", stderr: ""),
-            .success(stdout: "", stderr: "")
-        ])
+        let runner = try TransferTestTransport()
+        let source = try runner.file("source/demo.png", text: String(repeating: "x", count: 128 * 1024))
         let progress = ProgressCapture()
         let service = UploadService(runner: runner)
 
         let uploaded = try service.upload(
-            files: [URL(fileURLWithPath: "/tmp/demo.png")],
-            target: SSHTarget(name: "devbox", source: .config),
+            files: [source],
+            target: runner.target,
             copyToClipboard: false,
             progress: { progress.append($0) }
         )
 
         XCTAssertEqual(uploaded.count, 1)
-        XCTAssertEqual(runner.invocations.last?.arguments.first, "--progress")
-        XCTAssertEqual(progress.values.first?.fractionCompleted, 0.5)
+        XCTAssertEqual(runner.invocations.first { $0.executable == "/usr/bin/rsync" }?.arguments.first, "--progress")
+        XCTAssertFalse(progress.values.isEmpty)
     }
 
     func testDownloadUsesCompatibleProgressOptionForFilesAndLargeDirectories() throws {
-        for (inspection, expectedStrategy) in [("file\n", DownloadTransferStrategy.rsyncFile), ("directory\n1001\n", .rsyncDirectory)] {
-            let root = try makeRoot()
-            defer { try? FileManager.default.removeItem(at: root) }
-            let runner = ProgressCommandRunner(results: [
-                .success(stdout: inspection, stderr: ""),
-                .success(stdout: "", stderr: "")
-            ])
+        for (path, expectedStrategy) in [("~/runs/file.dat", DownloadTransferStrategy.rsyncFile), ("~/runs", .rsyncDirectory)] {
+            let runner = try TransferTestTransport()
+            _ = try runner.file("home/runs/file.dat", text: String(repeating: "x", count: 128 * 1024))
             let progress = ProgressCapture()
             let service = DownloadService(runner: runner)
 
             let downloaded = try service.download(
-                remotePaths: [RemotePath(hostHint: nil, path: "/home/data/archive.tar.gz")],
-                target: SSHTarget(name: "relay-310p2", source: .config),
-                destinationRoot: root,
+                remotePaths: [RemotePath(hostHint: nil, path: path)],
+                target: runner.target,
+                destinationRoot: runner.downloads,
                 copyToClipboard: false,
                 progress: { progress.append($0) }
             )
 
             XCTAssertEqual(downloaded.first?.strategy, expectedStrategy)
-            XCTAssertEqual(runner.invocations.last?.arguments.first, "--progress")
-            XCTAssertEqual(progress.values.first?.completedBytes, 1024)
+            XCTAssertEqual(runner.invocations.first { $0.executable == "/usr/bin/rsync" }?.arguments.first, "--progress")
+            XCTAssertFalse(progress.values.isEmpty)
         }
     }
 

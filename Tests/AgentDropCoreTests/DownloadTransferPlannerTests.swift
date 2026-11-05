@@ -20,7 +20,7 @@ final class DownloadTransferPlannerTests: XCTestCase {
     func testPlansTransferStrategyFromRemoteFacts() {
         XCTAssertEqual(DownloadTransferPlanner.strategy(for: .file), .rsyncFile)
         XCTAssertEqual(DownloadTransferPlanner.strategy(for: .directory(fileCount: 200)), .rsyncDirectory)
-        XCTAssertEqual(DownloadTransferPlanner.strategy(for: .directory(fileCount: 201)), .tarStream)
+        XCTAssertEqual(DownloadTransferPlanner.strategy(for: .directory(fileCount: 201)), .rsyncDirectory)
     }
 
     func testBuildsRsyncFileCommandWithQuotedRemotePath() {
@@ -40,7 +40,7 @@ final class DownloadTransferPlannerTests: XCTestCase {
             plan.execution,
             .command(CommandInvocation(
                 executable: "/usr/bin/rsync",
-                arguments: ["-a", "devbox:$HOME/'runs/output file.png'", "/Users/chris/Downloads/Agent Drop/output file.png"]
+                arguments: ["-a", "--checksum", "--partial", "devbox:$HOME/'runs/output file.png'", "/Users/chris/Downloads/Agent Drop/output file.png"]
             ))
         )
     }
@@ -62,7 +62,7 @@ final class DownloadTransferPlannerTests: XCTestCase {
             plan.execution,
             .command(CommandInvocation(
                 executable: "/usr/bin/rsync",
-                arguments: ["-a", "devbox:'/tmp/build-artifacts'/", "/Users/chris/Downloads/Agent Drop/build-artifacts/"]
+                arguments: ["-a", "--checksum", "--partial", "devbox:'/tmp/build-artifacts'/", "/Users/chris/Downloads/Agent Drop/build-artifacts/"]
             ))
         )
     }
@@ -72,26 +72,22 @@ final class DownloadTransferPlannerTests: XCTestCase {
             url: URL(fileURLWithPath: "/Users/chris/Downloads/Agent Drop/client reports", isDirectory: true),
             kind: .directory
         )
-        let plan = DownloadTransferPlanner.plan(
+        let pipeline = DownloadTransferPlanner.tarStreamPipeline(
             target: SSHTarget(name: "devbox", source: .config),
             remotePath: "/tmp/client's reports",
-            kind: .directory(fileCount: 201),
-            reservedDestination: reserved
+            localURL: reserved.url
         )
 
-        XCTAssertEqual(plan.strategy, .tarStream)
         XCTAssertEqual(
-            plan.execution,
-            .pipeline(
-                remoteArchiveInvocation: CommandInvocation(
+            pipeline.remoteArchiveInvocation,
+            CommandInvocation(
                 executable: "/usr/bin/ssh",
                 arguments: ["devbox", "tar -C '/tmp/client'\"'\"'s reports' -czf - ."]
-                ),
-                localExtractInvocation: CommandInvocation(
-                    executable: "/usr/bin/tar",
-                    arguments: ["-xzf", "-", "-C", "/Users/chris/Downloads/Agent Drop/client reports"]
-                )
             )
         )
+        XCTAssertEqual(pipeline.localExtractInvocation, CommandInvocation(
+                    executable: "/usr/bin/tar",
+                    arguments: ["-xzf", "-", "-C", "/Users/chris/Downloads/Agent Drop/client reports"]
+                ))
     }
 }

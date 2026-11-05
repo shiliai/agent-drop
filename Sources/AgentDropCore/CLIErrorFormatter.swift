@@ -29,6 +29,14 @@ public enum CLIErrorFormatter {
             return reason
         case let DownloadError.clipboardFailed(reason):
             return "Downloaded files, but could not copy local paths: \(reason)"
+        case let TransferIntegrityError.checksumFailed(reason):
+            return "Could not verify SHA-256: \(reason)"
+        case let TransferIntegrityError.checksumMismatch(path):
+            return "SHA-256 verification failed for \(path). Retry the transfer."
+        case TransferIntegrityError.transferBusy:
+            return "This transfer is already running."
+        case TransferIntegrityError.cancelled:
+            return "Transfer cancelled. Partial data was retained for retry."
         default:
             return String(describing: error)
         }

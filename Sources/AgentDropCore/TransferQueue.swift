@@ -249,7 +249,8 @@ public final class TransferQueue {
             }
         }
         if let index = entries.firstIndex(where: { $0.id == entry.id }) {
-            let bytes = completed.status == .succeeded ? totalBytes : entries[index].transferredBytes
+            let allSkipped = completed.skippedCount.map { $0 > 0 && $0 == completed.localFileNames.count } ?? false
+            let bytes = completed.status == .succeeded ? (allSkipped ? 0 : totalBytes) : entries[index].transferredBytes
             entries[index] = completed.withRetryRequest(request).withMetrics(
                 startedAt: entry.startedAt, completedAt: completedAt, totalBytes: totalBytes, transferredBytes: bytes
             )

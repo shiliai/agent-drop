@@ -29,6 +29,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
     public let totalBytes: Int64?
     public let transferredBytes: Int64?
     public let duration: TimeInterval?
+    public let skippedCount: Int?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -47,6 +48,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         case totalBytes
         case transferredBytes
         case duration
+        case skippedCount
     }
 
     public init(
@@ -65,7 +67,8 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         completedAt: Date? = nil,
         totalBytes: Int64? = nil,
         transferredBytes: Int64? = nil,
-        duration: TimeInterval? = nil
+        duration: TimeInterval? = nil,
+        skippedCount: Int? = nil
     ) {
         self.id = id
         self.createdAt = createdAt
@@ -83,6 +86,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         self.totalBytes = totalBytes
         self.transferredBytes = transferredBytes
         self.duration = duration
+        self.skippedCount = skippedCount
     }
 
     public init(from decoder: Decoder) throws {
@@ -103,6 +107,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
         totalBytes = try container.decodeIfPresent(Int64.self, forKey: .totalBytes)
         transferredBytes = try container.decodeIfPresent(Int64.self, forKey: .transferredBytes)
         duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration)
+        skippedCount = try container.decodeIfPresent(Int.self, forKey: .skippedCount)
     }
 
     public var copyPayload: String? {
@@ -142,7 +147,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
             retryRequest: retryRequest,
             startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes,
             transferredBytes: canMeasureLiveBytes && status == .running ? (progress?.completedBytes ?? transferredBytes) : transferredBytes,
-            duration: duration
+            duration: duration, skippedCount: skippedCount
         )
     }
 
@@ -152,7 +157,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
             status: status, localFileNames: localFileNames, remoteDisplayPaths: remoteDisplayPaths,
             localDisplayPaths: localDisplayPaths, errorMessage: errorMessage, progress: progress,
             retryRequest: request,
-            startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes, transferredBytes: transferredBytes, duration: duration
+            startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes, transferredBytes: transferredBytes, duration: duration, skippedCount: skippedCount
         )
     }
 
@@ -162,7 +167,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
             status: status, localFileNames: localFileNames, remoteDisplayPaths: remoteDisplayPaths,
             localDisplayPaths: localDisplayPaths, errorMessage: errorMessage, progress: progress,
             retryRequest: retryRequest, startedAt: startedAt, completedAt: completedAt,
-            totalBytes: totalBytes, transferredBytes: transferredBytes, duration: duration
+            totalBytes: totalBytes, transferredBytes: transferredBytes, duration: duration, skippedCount: skippedCount
         )
     }
 
@@ -172,7 +177,7 @@ public struct UploadHistoryEntry: Codable, Equatable, Identifiable, Sendable {
             localFileNames: localFileNames, remoteDisplayPaths: remoteDisplayPaths, localDisplayPaths: localDisplayPaths,
             errorMessage: errorMessage, progress: progress, retryRequest: retryRequest,
             startedAt: startedAt, completedAt: completedAt, totalBytes: totalBytes, transferredBytes: transferredBytes,
-            duration: startedAt.flatMap { start in completedAt.map { $0.timeIntervalSince(start) } }
+            duration: startedAt.flatMap { start in completedAt.map { $0.timeIntervalSince(start) } }, skippedCount: skippedCount
         )
     }
 
@@ -250,7 +255,8 @@ public extension UploadHistoryEntry {
             localFileNames: uploadedFiles.map(\.localDisplayName),
             remoteDisplayPaths: uploadedFiles.map(\.remoteDisplayPath),
             localDisplayPaths: [],
-            errorMessage: nil
+            errorMessage: nil,
+            skippedCount: uploadedFiles.filter(\.wasSkipped).count
         )
     }
 
@@ -289,7 +295,8 @@ public extension UploadHistoryEntry {
             localFileNames: downloadedFiles.map { $0.localURL.lastPathComponent },
             remoteDisplayPaths: downloadedFiles.map(\.remotePath),
             localDisplayPaths: downloadedFiles.map(\.localDisplayPath),
-            errorMessage: nil
+            errorMessage: nil,
+            skippedCount: downloadedFiles.filter(\.wasSkipped).count
         )
     }
 
