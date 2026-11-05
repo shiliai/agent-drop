@@ -55,6 +55,16 @@ final class DownloadServiceTests: XCTestCase {
         XCTAssertTrue(transport.invocations.isEmpty)
     }
 
+    func testRejectsRootAndDotPathsBeforeRemoteInspectionOrChecksum() throws {
+        let transport = try TransferTestTransport()
+        for path in ["/", "~/", "/tmp/..", "/tmp/."] {
+            XCTAssertThrowsError(try transport.pull(path)) {
+                XCTAssertEqual($0 as? DownloadError, .unsupportedRemotePath(path))
+            }
+        }
+        XCTAssertTrue(transport.invocations.isEmpty)
+    }
+
     func testMissingRemotePathIncludesTargetPathAndExitCode() throws {
         let transport = try TransferTestTransport()
         XCTAssertThrowsError(try transport.pull("~/missing")) { error in

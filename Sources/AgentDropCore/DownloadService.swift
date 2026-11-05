@@ -66,14 +66,17 @@ public final class DownloadService {
 
         for remotePath in remotePaths {
             try validate(remotePath: remotePath, target: target)
-            let remoteKind = try inspect(remotePath: remotePath.path, target: target, cancellation: cancellation)
-            let localKind = localDestinationKind(for: remoteKind)
-            let fingerprint = try TransferIntegrity.remoteFingerprint(remotePath.path, target: target, runner: runner, cancellation: cancellation)
             let basename = (remotePath.path.trimmingCharacters(in: CharacterSet(charactersIn: "/")) as NSString).lastPathComponent
             guard !["", ".", "..", "~"].contains(basename), remotePath.path != "/" else {
                 throw DownloadError.unsupportedRemotePath(remotePath.path)
             }
+            let remoteKind = try inspect(remotePath: remotePath.path, target: target, cancellation: cancellation)
+            let localKind = localDestinationKind(for: remoteKind)
+            let fingerprint = try TransferIntegrity.remoteFingerprint(remotePath.path, target: target, runner: runner, cancellation: cancellation)
             if let existing = try matchingLocalPath(root: root, basename: basename, fingerprint: fingerprint, cancellation: cancellation) {
+                guard try TransferIntegrity.remoteFingerprint(remotePath.path, target: target, runner: runner, cancellation: cancellation) == fingerprint else {
+                    throw TransferIntegrityError.checksumMismatch(remotePath.path)
+                }
                 downloaded.append(DownloadedFile(remotePath: remotePath.path, localURL: existing, localDisplayPath: existing.path,
                                                  strategy: DownloadTransferPlanner.strategy(for: remoteKind), wasSkipped: true))
                 continue

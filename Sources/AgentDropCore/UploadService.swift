@@ -87,6 +87,9 @@ public final class UploadService {
             try TransferIntegrity.checkCancellation(cancellation)
             let fingerprint = try TransferIntegrity.localFingerprint(source.sourceURL, cancellation: cancellation)
             if let existing = try matchingRemotePath(source: source, fingerprint: fingerprint, target: target, cancellation: cancellation) {
+                guard try TransferIntegrity.localFingerprint(source.sourceURL, cancellation: cancellation) == fingerprint else {
+                    throw TransferIntegrityError.checksumMismatch(source.localDisplayName)
+                }
                 uploaded.append(UploadedFile(localURL: source.sourceURL, remoteDisplayPath: "~/" + existing, localDisplayName: source.localDisplayName, wasSkipped: true))
                 continue
             }
