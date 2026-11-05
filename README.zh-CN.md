@@ -49,6 +49,7 @@ Agent Drop 也可以把已知的远程文件或文件夹拉回 Mac。使用
 - 把上传内容放到远程 inbox 根目录 `~/.agent-inbox`。
 - 按日期分组：`~/.agent-inbox/YYYY-MM-DD/`。
 - 支持把远程文件和文件夹拉回 `~/Downloads/Agent Drop/`。
+- 上传和下载支持续传，实际文件 SHA-256 一致时自动跳过，不依赖历史记录。详见[续传说明](docs/transfer-resume.zh-CN.md)。
 - 遇到重名时自动改名，例如 `demo-2.png` 或 `build-artifacts-2`。
 - 把最终远程路径复制到 Mac 剪贴板，路径包含文件名或文件夹名。
 - pull 成功后，把最终本地路径复制到 Mac 剪贴板。
@@ -181,7 +182,7 @@ swift run agent-drop pull --target devbox ~/runs/output.png
 
 Agent Drop 使用 UTC `YYYY-MM-DD` 作为上传日期目录。
 
-文件夹上传会在远端保留同名目录，并把选中文件夹里的内容同步到这个远程目录里。Pull 会把文件和文件夹放到 `~/Downloads/Agent Drop/`，保留目录内容；如果本地目标已存在，会选择带后缀的新名称。
+文件夹上传会在远端保留同名目录，并把选中文件夹里的内容同步到这个远程目录里。Pull 会把文件和文件夹放到 `~/Downloads/Agent Drop/`，保留目录内容。两端 SHA-256 一致时复用已有目标；内容不同的重名文件保留原件，并选择带后缀的新名称。中断的数据保留在隐藏续传区供重试使用。远端除 rsync 外还需要 `base64` 及 `sha256sum` 或 `shasum`。
 
 ## Finder 扩展说明
 
@@ -261,7 +262,7 @@ cmp "$TEST_DIR/root.txt" "$LOCAL_DIR/root.txt"
 cmp "$TEST_DIR/nested/child.txt" "$LOCAL_DIR/nested/child.txt"
 ```
 
-重复执行同一个 pull 命令，可以确认本地重名时使用 `-2` 后缀。测试 App 路由时，复制
+重复执行同一个 pull 命令，可以确认 SHA-256 一致时复用本地文件；修改本地文件后再次下载，则保留原件并使用 `-2` 后缀。测试 App 路由时，复制
 `x570:$REMOTE_PATH`，在 Finder 里选择 `Agent Drop -> Pull from...`，确认 `Transfer`
 区域会切到 Pull 模式，预选 `x570`，并填入带 host 前缀的远程路径。
 

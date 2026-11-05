@@ -4,11 +4,13 @@ public struct UploadedFile: Equatable, Sendable {
     public let localURL: URL
     public let remoteDisplayPath: String
     public let localDisplayName: String
+    public let wasSkipped: Bool
 
-    public init(localURL: URL, remoteDisplayPath: String, localDisplayName: String? = nil) {
+    public init(localURL: URL, remoteDisplayPath: String, localDisplayName: String? = nil, wasSkipped: Bool = false) {
         self.localURL = localURL
         self.remoteDisplayPath = remoteDisplayPath
         self.localDisplayName = localDisplayName ?? localURL.lastPathComponent
+        self.wasSkipped = wasSkipped
     }
 }
 
@@ -79,19 +81,56 @@ public final class UploadService {
         var uploaded: [UploadedFile] = []
 
         for source in sources {
-            let remoteName = try reserveRemoteName(for: source, target: target, cancellation: cancellation)
-            let relativePath = inboxPath.relativeDirectory + "/" + remoteName
-            let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath) + (source.isDirectory ? "/" : "")
+            guard !source.remoteName.isEmpty, source.remoteName != ".", source.remoteName != "..", !source.remoteName.contains("/") else {
+                throw UploadError.noAvailableRemoteName(source.remoteName)
+            }
+            try TransferIntegrity.checkCancellation(cancellation)
+            let fingerprint = try TransferIntegrity.localFingerprint(source.sourceURL, cancellation: cancellation)
+            if let existing = try matchingRemotePath(source: source, fingerprint: fingerprint, target: target, cancellation: cancellation) {
+                guard try TransferIntegrity.localFingerprint(source.sourceURL, cancellation: cancellation) == fingerprint else {
+                    throw TransferIntegrityError.checksumMismatch(source.localDisplayName)
+                }
+                uploaded.append(UploadedFile(localURL: source.sourceURL, remoteDisplayPath: "~/" + existing, localDisplayName: source.localDisplayName, wasSkipped: true))
+                continue
+            }
+
+            let key = TransferIntegrity.identifier([source.remoteName, fingerprint])
+            let stagingPath = ".agent-inbox/.partial/" + key
+            let payload = stagingPath + "/payload"
+            let stagingCommand = ShellQuoting.homeRelativeCommandPath(stagingPath)
+            let payloadCommand = ShellQuoting.homeRelativeCommandPath(payload)
+            let prepare = source.isDirectory ? "mkdir -p -- \(payloadCommand)" : "mkdir -p -- \(stagingCommand)"
+            let prepared = try run(CommandInvocation(executable: "/usr/bin/ssh", arguments: [target.connectName, prepare]), cancellation: cancellation)
+            guard prepared.succeeded else { throw UploadError.remoteDirectoryFailed(prepared.stderr) }
+            let commandPath = payloadCommand + (source.isDirectory ? "/" : "")
             let sourcePath = source.sourceURL.path + (source.isDirectory ? "/" : "")
 
             let result = try runRsync(CommandInvocation(
                 executable: "/usr/bin/rsync",
-                arguments: ["-a", sourcePath, "\(target.connectName):\(commandPath)"]
+                arguments: TransferIntegrity.rsyncOptions + [sourcePath, "\(target.connectName):\(commandPath)"]
             ), progress: progress, cancellation: cancellation)
 
             guard result.succeeded else {
-                removeReservedRemoteName(relativePath: relativePath, target: target, isDirectory: source.isDirectory)
                 throw UploadError.rsyncFailed(result.stderr)
+            }
+
+            try TransferIntegrity.checkCancellation(cancellation)
+            let received = try TransferIntegrity.remoteFingerprint("~/" + payload, target: target, runner: runner, cancellation: cancellation)
+            guard received == fingerprint else { throw TransferIntegrityError.checksumMismatch(source.localDisplayName) }
+            guard try TransferIntegrity.localFingerprint(source.sourceURL, cancellation: cancellation) == fingerprint else {
+                throw TransferIntegrityError.checksumMismatch(source.localDisplayName)
+            }
+            let remoteName = try reserveRemoteName(for: source, target: target, cancellation: cancellation)
+            let relativePath = inboxPath.relativeDirectory + "/" + remoteName
+            let destination = ShellQuoting.homeRelativeCommandPath(relativePath)
+            let publish = source.isDirectory ? "rmdir -- \(destination) && mv -- \(payloadCommand) \(destination)" : "mv -f -- \(payloadCommand) \(destination)"
+            let published = try run(CommandInvocation(executable: "/usr/bin/ssh", arguments: [target.connectName, publish]), cancellation: cancellation)
+            guard published.succeeded else {
+                removeReservedRemoteName(relativePath: relativePath, target: target, isDirectory: source.isDirectory)
+                throw UploadError.rsyncFailed(published.stderr)
+            }
+            guard try TransferIntegrity.remoteFingerprint("~/" + relativePath, target: target, runner: runner, cancellation: cancellation) == fingerprint else {
+                throw TransferIntegrityError.checksumMismatch(source.localDisplayName)
             }
 
             uploaded.append(UploadedFile(
@@ -110,6 +149,22 @@ public final class UploadService {
         }
 
         return uploaded
+    }
+
+    private func matchingRemotePath(source: UploadSourceFile, fingerprint: String, target: SSHTarget, cancellation: TransferCancellation?) throws -> String? {
+        let names = RemoteNamePlanner(originalName: source.remoteName).candidates(prefixCount: 100).map(ShellQuoting.singleQuote).joined(separator: " ")
+        let command = "for d in \"$HOME\"/.agent-inbox/????-??-??; do [ -d \"$d\" ] || continue; for n in \(names); do p=\"$d/$n\"; if [ -e \"$p\" ] || [ -L \"$p\" ]; then printf %s \"${p#\"$HOME/\"}\" | base64 | tr -d '\\n'; printf '\\n'; fi; done; done"
+        let result = try run(CommandInvocation(executable: "/usr/bin/ssh", arguments: [target.connectName, command]), cancellation: cancellation)
+        guard result.succeeded else { throw UploadError.remoteExistenceCheckFailed(result.stderr) }
+        for encoded in result.stdout.split(separator: "\n") {
+            guard let data = Data(base64Encoded: String(encoded)), let path = String(data: data, encoding: .utf8),
+                  path.hasPrefix(".agent-inbox/"), !path.split(separator: "/").contains("..") else {
+                throw UploadError.remoteExistenceCheckFailed("Invalid inbox path response")
+            }
+            let actual = try TransferIntegrity.remoteFingerprint("~/" + path, target: target, runner: runner, cancellation: cancellation)
+            if actual == fingerprint { return path }
+        }
+        return nil
     }
 
     private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?, cancellation: TransferCancellation?) throws -> CommandResult {
@@ -187,18 +242,15 @@ public final class UploadService {
 
     private func removeReservedRemoteName(relativePath: String, target: SSHTarget, isDirectory: Bool) {
         let commandPath = ShellQuoting.homeRelativeCommandPath(relativePath)
-        let removeFlag = isDirectory ? "-rf" : "-f"
+        let cleanup = isDirectory ? "rmdir -- \(commandPath)" : "if [ ! -L \(commandPath) ] && [ -f \(commandPath) ] && [ ! -s \(commandPath) ]; then rm -f -- \(commandPath); fi"
         _ = try? runner.run(CommandInvocation(
             executable: "/usr/bin/ssh",
-            arguments: [target.connectName, "rm \(removeFlag) -- \(commandPath)"]
+            arguments: [target.connectName, cleanup]
         ))
     }
 
     private func run(_ invocation: CommandInvocation, cancellation: TransferCancellation?) throws -> CommandResult {
-        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
-            return try cancellableRunner.run(invocation, progress: nil, cancellation: cancellation)
-        }
-        return try runner.run(invocation)
+        try TransferIntegrity.run(invocation, runner: runner, cancellation: cancellation)
     }
 
     private func clipboardFailureReason(from error: Error) -> String {

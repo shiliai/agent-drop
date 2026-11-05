@@ -131,7 +131,11 @@ struct TransferActivityRow: View {
             return entry.direction == .upload ? "Uploading" : "Downloading"
         case .failed: return "Failed"
         case .cancelled: return "Cancelled"
-        case .succeeded: return "Completed"
+        case .succeeded:
+            if let skipped = entry.skippedCount, skipped > 0 {
+                return skipped == entry.localFileNames.count ? "Skipped" : "Completed"
+            }
+            return "Completed"
         }
     }
 
@@ -274,6 +278,11 @@ struct TransferActivityRow: View {
                 }
             }
             .font(.caption2.monospacedDigit())
+            if entry.status == .succeeded, let skipped = entry.skippedCount, skipped > 0, skipped < entry.localFileNames.count {
+                Text("\(skipped) skipped")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if entry.status == .running, !isQueued, !isUnknown {
                 if let fraction = entry.progress?.fractionCompleted {
                     ProgressView(value: fraction)

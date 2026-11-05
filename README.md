@@ -50,6 +50,7 @@ Transfer window with shared Hosts, Drop/Pull modes, and the global status bar:
 - Store uploaded files and folders under the remote inbox root `~/.agent-inbox`.
 - Group uploaded paths by date: `~/.agent-inbox/YYYY-MM-DD/`.
 - Pull remote files and folders back into `~/Downloads/Agent Drop/`.
+- Resume interrupted uploads/downloads and automatically skip actual SHA-256 matches, independently of history.
 - Avoid overwrites by renaming conflicts, for example `demo-2.png` or
   `build-artifacts-2`.
 - Copy final remote paths, including filenames or folder names, to the Mac clipboard.
@@ -193,7 +194,9 @@ Agent Drop uses a UTC `YYYY-MM-DD` folder for uploaded file paths.
 Regular files and directories are supported. Directory uploads preserve the
 selected directory contents under a remote directory with the same display name.
 Pulls place files and directories under `~/Downloads/Agent Drop/`, preserving
-directory contents and choosing a suffixed name if the local destination exists.
+directory contents. Existing SHA-256 matches are reused; different content gets a
+suffixed name. Interrupted bytes are retained in hidden staging directories for
+retry. Remote hosts need `sha256sum` or `shasum` and `base64` in addition to rsync.
 
 ## Finder Extension Notes
 
@@ -293,8 +296,9 @@ cmp "$TEST_DIR/root.txt" "$LOCAL_DIR/root.txt"
 cmp "$TEST_DIR/nested/child.txt" "$LOCAL_DIR/nested/child.txt"
 ```
 
-Repeat the pull command with the same remote path to confirm local conflicts use
-the `-2` suffix. To test the App route, copy `x570:$REMOTE_PATH`, choose
+Repeat the pull command with the same remote path to confirm it reuses the
+SHA-256 verified local output. Modify that output and repeat to check that the
+original is preserved and a `-2` suffix is used. To test the App route, copy `x570:$REMOTE_PATH`, choose
 `Agent Drop -> Pull from...` in Finder, and confirm the `Transfer` section opens
 in Pull mode, preselects `x570`, and preloads the host-prefixed remote path.
 
