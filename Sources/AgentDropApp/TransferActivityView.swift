@@ -61,11 +61,18 @@ struct TransferActivityView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                         Section {
-                            if filter == .all {
-                                activitySection("In Progress", items: filteredEntries.filter { $0.status == .running })
-                                activitySection("Recent", items: filteredEntries.filter { $0.status != .running })
-                            } else {
-                                activitySection(filter == .active ? "In Progress" : filter.rawValue, items: filteredEntries)
+                            // Keep each transfer in one ForEach as its status changes. Moving
+                            // the same ID between lazy ForEach groups can retain the old row.
+                            ForEach(filteredEntries) { entry in
+                                if let title = sectionTitle(before: entry) {
+                                    Text(title)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.top, 8)
+                                        .padding(.bottom, 2)
+                                }
+                                TransferActivityRow(entry: entry, queue: queue, showsMetadataColumns: true)
+                                Divider()
                             }
                         } header: {
                             ActivityTableHeader()
@@ -79,19 +86,17 @@ struct TransferActivityView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    @ViewBuilder
-    private func activitySection(_ title: String, items: [UploadHistoryEntry]) -> some View {
-        if !items.isEmpty {
-            Text("\(title) (\(items.count))")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-            ForEach(items) { entry in
-                TransferActivityRow(entry: entry, queue: queue, showsMetadataColumns: true)
-                Divider()
-            }
+    private func sectionTitle(before entry: UploadHistoryEntry) -> String? {
+        let items = filteredEntries
+        if filter == .all {
+            let active = items.filter { $0.status == .running }
+            let recent = items.filter { $0.status != .running }
+            if entry.id == active.first?.id { return "In Progress (\(active.count))" }
+            if entry.id == recent.first?.id { return "Recent (\(recent.count))" }
+        } else if entry.id == items.first?.id {
+            return "\(filter == .active ? "In Progress" : filter.rawValue) (\(items.count))"
         }
+        return nil
     }
 }
 
