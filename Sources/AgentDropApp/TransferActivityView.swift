@@ -209,6 +209,21 @@ struct TransferActivityRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(entry.targetName)
+                if entry.status == .running, let progress = entry.progress, progress.totalFiles != nil {
+                    if let count = progress.fileCountText {
+                        Text(count)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if let file = progress.currentFile {
+                        Text(file)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(file)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -278,7 +293,7 @@ struct TransferActivityRow: View {
                     .foregroundStyle(entry.status == .failed ? .red : (entry.status == .cancelled ? .orange : .secondary))
                 Spacer(minLength: 0)
                 if entry.status == .running, !isQueued, !isUnknown {
-                    Text(entry.progress?.percentText ?? "")
+                    Text(entry.progress?.percentText.map { entry.progress?.totalFiles == nil ? $0 : "File \($0)" } ?? "")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -293,7 +308,7 @@ struct TransferActivityRow: View {
                     ProgressView(value: fraction)
                         .controlSize(.small)
                     if let eta = entry.progress?.etaText {
-                        Text("ETA \(eta)")
+                        Text(entry.progress?.totalFiles == nil ? "ETA \(eta)" : "File ETA \(eta)")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
                     }

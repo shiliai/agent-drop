@@ -7,17 +7,32 @@ public struct TransferProgress: Codable, Equatable, Sendable {
     public let fractionCompleted: Double?
     public let bytesPerSecond: Double?
     public let estimatedTimeRemaining: TimeInterval?
+    public let totalFiles: Int?
+    public let completedFiles: Int?
+    public let currentFile: String?
 
     public init(
         completedBytes: Int64,
         fractionCompleted: Double?,
         bytesPerSecond: Double?,
-        estimatedTimeRemaining: TimeInterval?
+        estimatedTimeRemaining: TimeInterval?,
+        totalFiles: Int? = nil,
+        completedFiles: Int? = nil,
+        currentFile: String? = nil
     ) {
         self.completedBytes = completedBytes
         self.fractionCompleted = fractionCompleted
         self.bytesPerSecond = bytesPerSecond
         self.estimatedTimeRemaining = estimatedTimeRemaining
+        self.totalFiles = totalFiles
+        self.completedFiles = completedFiles
+        self.currentFile = currentFile
+    }
+
+    public var fileCountText: String? {
+        guard let totalFiles else { return nil }
+        guard let completedFiles else { return "\(totalFiles) files total" }
+        return "\(completedFiles) / \(totalFiles) files"
     }
 
     public var percentText: String? {
@@ -128,5 +143,53 @@ public enum RsyncProgressParser {
               let seconds = Double(components[2]) else { return nil }
         let duration = hours * 3600 + minutes * 60 + seconds
         return duration.isFinite ? duration : nil
+    }
+}
+
+final class DirectoryDownloadProgress: @unchecked Sendable {
+    private let lock = NSLock()
+    private let totalFiles: Int
+    private let initialCompleted: Int?
+    private let handler: TransferProgressHandler
+    private var completedTransfers = 0
+    private var currentFile: String?
+    private var currentFileCompleted = false
+
+    init(totalFiles: Int, initialCompleted: Int?, handler: @escaping TransferProgressHandler) {
+        self.totalFiles = totalFiles
+        self.initialCompleted = initialCompleted
+        self.handler = handler
+    }
+
+    func start() {
+        handler(snapshot(nil))
+    }
+
+    func consume(_ line: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        if line.hasPrefix("AD:>f"), let separator = line.dropFirst(3).firstIndex(of: ":") {
+            currentFile = String(line[line.index(after: separator)...])
+            currentFileCompleted = false
+            handler(snapshot(nil))
+        } else if let progress = RsyncProgressParser.parse(line) {
+            if line.contains("(xfer#"), currentFile != nil, !currentFileCompleted {
+                completedTransfers += 1
+                currentFileCompleted = true
+            }
+            handler(snapshot(progress))
+        }
+    }
+
+    private func snapshot(_ progress: TransferProgress?) -> TransferProgress {
+        TransferProgress(
+            completedBytes: progress?.completedBytes ?? 0,
+            fractionCompleted: progress?.fractionCompleted,
+            bytesPerSecond: progress?.bytesPerSecond,
+            estimatedTimeRemaining: progress?.estimatedTimeRemaining,
+            totalFiles: totalFiles,
+            completedFiles: initialCompleted.map { min(totalFiles, $0 + completedTransfers) },
+            currentFile: currentFile
+        )
     }
 }

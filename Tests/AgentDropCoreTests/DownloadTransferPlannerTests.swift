@@ -12,7 +12,7 @@ final class DownloadTransferPlannerTests: XCTestCase {
             executable: "/usr/bin/ssh",
             arguments: [
                 "devbox",
-                "if [ -f $HOME/'runs/client'\"'\"'s output' ]; then printf 'file\\n'; elif [ -d $HOME/'runs/client'\"'\"'s output' ]; then printf 'directory\\n'; find $HOME/'runs/client'\"'\"'s output' -type f | wc -l; else exit 2; fi"
+                "if [ -f $HOME/'runs/client'\"'\"'s output' ]; then printf 'file\\n'; elif [ -d $HOME/'runs/client'\"'\"'s output' ]; then printf 'directory\\n'; find $HOME/'runs/client'\"'\"'s output' -type f -exec sh -c 'for p do printf \".\\n\"; done' sh '{}' + | wc -l; else exit 2; fi"
             ]
         ))
     }

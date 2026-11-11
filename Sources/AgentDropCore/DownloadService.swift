@@ -91,7 +91,7 @@ public final class DownloadService {
             let staging = ReservedLocalDestination(url: payload, kind: localKind)
 
             let plan = DownloadTransferPlanner.plan(target: target, remotePath: remotePath.path, kind: remoteKind, reservedDestination: staging)
-            try execute(plan, remotePath: remotePath.path, target: target, progress: progress, cancellation: cancellation)
+            try execute(plan, remoteKind: remoteKind, remotePath: remotePath.path, target: target, progress: progress, cancellation: cancellation)
             try TransferIntegrity.checkCancellation(cancellation)
             guard try TransferIntegrity.localFingerprint(payload, cancellation: cancellation) == fingerprint else {
                 throw TransferIntegrityError.checksumMismatch(remotePath.path)
@@ -215,6 +215,7 @@ public final class DownloadService {
 
     private func execute(
         _ plan: DownloadTransferPlan,
+        remoteKind: RemotePathKind,
         remotePath: String,
         target: SSHTarget,
         progress: TransferProgressHandler?,
@@ -222,7 +223,7 @@ public final class DownloadService {
     ) throws {
         switch plan.execution {
         case let .command(invocation):
-            let result = try runRsync(invocation, progress: progress, cancellation: cancellation)
+            let result = try runRsync(invocation, remoteKind: remoteKind, progress: progress, cancellation: cancellation)
             guard result.succeeded else {
                 throw DownloadError.rsyncFailed(failureMessage(
                     target: target,
@@ -255,37 +256,41 @@ public final class DownloadService {
         }
     }
 
-    private func runRsync(_ invocation: CommandInvocation, progress: TransferProgressHandler?, cancellation: TransferCancellation?) throws -> CommandResult {
-        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
-            let lineProgress: (@Sendable (String) -> Void)?
-            if let handler = progress {
-                lineProgress = { line in
-                    if let parsed = RsyncProgressParser.parse(line) { handler(parsed) }
-                }
+    private func runRsync(_ invocation: CommandInvocation, remoteKind: RemotePathKind, progress: TransferProgressHandler?, cancellation: TransferCancellation?) throws -> CommandResult {
+        var arguments = invocation.arguments
+        var lineProgress: (@Sendable (String) -> Void)?
+        if let progress {
+            arguments = ["--progress"] + arguments
+            if case let .directory(totalFiles) = remoteKind {
+                let preview = CommandInvocation(executable: invocation.executable,
+                    arguments: ["--dry-run", "-i", "--out-format=AD:%i:%n"] + invocation.arguments,
+                    standardInput: invocation.standardInput)
+                let result = try TransferIntegrity.run(preview, runner: runner, cancellation: cancellation)
+                let pending = result.stdout.split(separator: "\n").filter { $0.hasPrefix("AD:>f") }.count
+                let initialCompleted = result.succeeded && pending <= totalFiles ? totalFiles - pending : nil
+                let tracker = DirectoryDownloadProgress(totalFiles: totalFiles, initialCompleted: initialCompleted, handler: progress)
+                tracker.start()
+                lineProgress = { tracker.consume($0) }
+                arguments.insert("--out-format=AD:%i:%n", at: 1)
             } else {
-                lineProgress = nil
+                lineProgress = { line in
+                    if let parsed = RsyncProgressParser.parse(line) { progress(parsed) }
+                }
             }
+        }
+        let progressInvocation = CommandInvocation(executable: invocation.executable, arguments: arguments, standardInput: invocation.standardInput)
+        if let cancellableRunner = runner as? CancellableProgressReportingCommandRunning {
             return try cancellableRunner.run(
-                CommandInvocation(executable: invocation.executable, arguments: progress == nil ? invocation.arguments : ["--progress"] + invocation.arguments, standardInput: invocation.standardInput),
+                progressInvocation,
                 progress: lineProgress,
                 cancellation: cancellation
             )
         }
 
-        guard let progress, let progressRunner = runner as? ProgressReportingCommandRunning else {
+        guard let lineProgress, let progressRunner = runner as? ProgressReportingCommandRunning else {
             return try runner.run(invocation)
         }
-
-        let progressInvocation = CommandInvocation(
-            executable: invocation.executable,
-            arguments: ["--progress"] + invocation.arguments,
-            standardInput: invocation.standardInput
-        )
-        return try progressRunner.run(progressInvocation) { line in
-            if let parsed = RsyncProgressParser.parse(line) {
-                progress(parsed)
-            }
-        }
+        return try progressRunner.run(progressInvocation, progress: lineProgress)
     }
 
     private func failureMessage(
