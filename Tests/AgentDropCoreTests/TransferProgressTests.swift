@@ -1,7 +1,44 @@
 import XCTest
 @testable import AgentDropCore
 
+private final class DirectoryProgressCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [TransferProgress] = []
+
+    var values: [TransferProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func append(_ progress: TransferProgress) {
+        lock.lock()
+        defer { lock.unlock() }
+        storage.append(progress)
+    }
+}
+
 final class TransferProgressTests: XCTestCase {
+    func testLegacyProgressDecodesWithoutDirectoryMetadata() throws {
+        let json = #"{"completedBytes":42,"fractionCompleted":0.5}"#
+        let progress = try JSONDecoder().decode(TransferProgress.self, from: Data(json.utf8))
+        XCTAssertNil(progress.totalFiles)
+        XCTAssertNil(progress.completedFiles)
+        XCTAssertNil(progress.currentFile)
+    }
+
+    func testDirectoryProgressTracksFileNamesAndCompletedCounts() {
+        let capture = DirectoryProgressCapture()
+        let tracker = DirectoryDownloadProgress(totalFiles: 4, initialCompleted: 2) { capture.append($0) }
+        tracker.start()
+        tracker.consume("AD:>f++++++++:folder/a name.txt")
+        tracker.consume("100 50% 1.00MB/s 0:00:01")
+        tracker.consume("200 100% 1.00MB/s 0:00:00 (xfer#1, to-check=0/2)")
+        tracker.consume("200 100% 1.00MB/s 0:00:00 (xfer#1, to-check=0/2)")
+        XCTAssertEqual(capture.values.first?.fileCountText, "2 / 4 files")
+        XCTAssertEqual(capture.values.last?.fileCountText, "3 / 4 files")
+        XCTAssertEqual(capture.values.last?.currentFile, "folder/a name.txt")
+    }
     func testEmptyFileRsyncProgressOmitsNonFinitePercentage() throws {
         // macOS /usr/bin/rsync emits this line when transferring an empty file.
         let progress = try XCTUnwrap(RsyncProgressParser.parse("0 nan% 00:00:00 (xfer#1, to-check=0/1)"))

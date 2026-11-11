@@ -209,6 +209,21 @@ struct TransferActivityRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(entry.targetName)
+                if entry.status == .running, let progress = entry.progress, progress.totalFiles != nil {
+                    if let count = progress.fileCountText {
+                        Text(count)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if let file = progress.currentFile {
+                        Text(file)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(file)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -277,7 +292,7 @@ struct TransferActivityRow: View {
                 Text(status)
                     .foregroundStyle(entry.status == .failed ? .red : (entry.status == .cancelled ? .orange : .secondary))
                 Spacer(minLength: 0)
-                if entry.status == .running, !isQueued, !isUnknown {
+                if entry.status == .running, !isQueued, !isUnknown, entry.progress?.totalFiles == nil {
                     Text(entry.progress?.percentText ?? "")
                         .foregroundStyle(.secondary)
                 }
@@ -292,10 +307,17 @@ struct TransferActivityRow: View {
                 if let fraction = entry.progress?.fractionCompleted {
                     ProgressView(value: fraction)
                         .controlSize(.small)
-                    if let eta = entry.progress?.etaText {
-                        Text("ETA \(eta)")
+                    if entry.progress?.totalFiles != nil {
+                        HStack(spacing: 4) {
+                            if let percent = entry.progress?.percentText { Text("File \(percent)") }
+                            if let eta = entry.progress?.etaText { Text("ETA \(eta)") }
+                        }
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
+                    } else if let eta = entry.progress?.etaText {
+                        Text("ETA \(eta)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     ProgressView()

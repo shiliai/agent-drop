@@ -31,7 +31,7 @@ public enum DownloadTransferPlanner {
 
     public static func remoteInspectionCommand(target: SSHTarget, remotePath: String) -> CommandInvocation {
         let commandPath = remoteShellPath(remotePath)
-        let command = "if [ -f \(commandPath) ]; then printf 'file\\n'; elif [ -d \(commandPath) ]; then printf 'directory\\n'; find \(commandPath) -type f | wc -l; else exit 2; fi"
+        let command = "if [ -f \(commandPath) ]; then printf 'file\\n'; elif [ -d \(commandPath) ]; then printf 'directory\\n'; find \(commandPath) -type f -exec sh -c 'for p do printf \".\\n\"; done' sh '{}' + | wc -l; else exit 2; fi"
         return CommandInvocation(
             executable: "/usr/bin/ssh",
             arguments: [target.connectName, command]

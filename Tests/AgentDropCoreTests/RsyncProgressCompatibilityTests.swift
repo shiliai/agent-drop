@@ -57,9 +57,31 @@ final class RsyncProgressCompatibilityTests: XCTestCase {
             )
 
             XCTAssertEqual(downloaded.first?.strategy, expectedStrategy)
-            XCTAssertEqual(runner.invocations.first { $0.executable == "/usr/bin/rsync" }?.arguments.first, "--progress")
+            XCTAssertTrue(runner.invocations.contains { $0.executable == "/usr/bin/rsync" && $0.arguments.first == "--progress" })
             XCTAssertFalse(progress.values.isEmpty)
         }
+    }
+
+    func testDirectoryProgressReportsFilesAndPreservesResumedFiles() throws {
+        let runner = try TransferTestTransport()
+        let directory = runner.home.appendingPathComponent("runs")
+        _ = try runner.file("home/runs/already.dat", text: "already")
+        _ = try runner.file("home/runs/sub/next file.dat", text: String(repeating: "x", count: 128 * 1024))
+        _ = try runner.file("home/runs/line\nbreak.dat", text: "")
+        let fingerprint = try TransferIntegrity.localFingerprint(directory, cancellation: nil)
+        let key = TransferIntegrity.identifier([runner.target.connectName, "~/runs", fingerprint])
+        let staged = runner.downloads.appendingPathComponent(".agent-drop-partial/\(key)/payload")
+        try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: directory.appendingPathComponent("already.dat"), to: staged.appendingPathComponent("already.dat"))
+        let progress = ProgressCapture()
+
+        _ = try runner.pull("~/runs", progress: { progress.append($0) })
+
+        XCTAssertEqual(progress.values.first?.totalFiles, 3)
+        XCTAssertEqual(progress.values.first?.completedFiles, 1)
+        XCTAssertTrue(progress.values.contains { $0.currentFile == "sub/next file.dat" })
+        XCTAssertEqual(progress.values.last?.completedFiles, 3)
+        XCTAssertTrue(progress.values.allSatisfy { $0.totalFiles == 3 })
     }
 
     func testSystemRsyncTransfersFileWithProgressEnabled() throws {
