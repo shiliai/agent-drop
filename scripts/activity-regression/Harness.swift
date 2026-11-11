@@ -15,7 +15,14 @@ import AgentDropCore
         .withMetrics(startedAt: Date(), totalBytes: 100)
         .updatingProgress(CommandLine.arguments.contains("--recovery")
             ? RsyncProgressParser.parse("0 nan% 00:00:00 (xfer#1, to-check=0/1)") : nil)
-    @State private var entries = [running] + (1...99).map { index in
+    private static let directoryDownload = TransferRequest.download(
+        target: SSHTarget(name: "test-host", source: .config),
+        paths: [RemotePath(hostHint: nil, path: "/home/test/Downloads")]
+    ).entry(id: UUID(), createdAt: Date(), status: .running)
+        .updatingProgress(TransferProgress(completedBytes: 820, fractionCompleted: 0.82,
+            bytesPerSecond: 100, estimatedTimeRemaining: 6, totalFiles: 42,
+            completedFiles: 12, currentFile: "reports/current-report.pdf"))
+    @State private var entries = [CommandLine.arguments.contains("--directory-progress") ? directoryDownload : running] + (1...99).map { index in
         UploadHistoryEntry.succeeded(targetName: "test-host", uploadedFiles: [UploadedFile(localURL: URL(fileURLWithPath: "/tmp/older-\(index).txt"), remoteDisplayPath: "~/.agent-inbox/older-\(index).txt")], createdAt: Date().addingTimeInterval(Double(-index)))
     }
     @State private var queue = makeQueue()

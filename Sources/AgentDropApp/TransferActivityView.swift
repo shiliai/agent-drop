@@ -292,8 +292,8 @@ struct TransferActivityRow: View {
                 Text(status)
                     .foregroundStyle(entry.status == .failed ? .red : (entry.status == .cancelled ? .orange : .secondary))
                 Spacer(minLength: 0)
-                if entry.status == .running, !isQueued, !isUnknown {
-                    Text(entry.progress?.percentText.map { entry.progress?.totalFiles == nil ? $0 : "File \($0)" } ?? "")
+                if entry.status == .running, !isQueued, !isUnknown, entry.progress?.totalFiles == nil {
+                    Text(entry.progress?.percentText ?? "")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -307,10 +307,17 @@ struct TransferActivityRow: View {
                 if let fraction = entry.progress?.fractionCompleted {
                     ProgressView(value: fraction)
                         .controlSize(.small)
-                    if let eta = entry.progress?.etaText {
-                        Text(entry.progress?.totalFiles == nil ? "ETA \(eta)" : "File ETA \(eta)")
+                    if entry.progress?.totalFiles != nil {
+                        HStack(spacing: 4) {
+                            if let percent = entry.progress?.percentText { Text("File \(percent)") }
+                            if let eta = entry.progress?.etaText { Text("ETA \(eta)") }
+                        }
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.secondary)
+                    } else if let eta = entry.progress?.etaText {
+                        Text("ETA \(eta)")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     ProgressView()
