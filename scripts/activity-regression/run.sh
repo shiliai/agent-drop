@@ -21,4 +21,4 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 trap 'rm -rf "$FIXTURE_DIR"' EXIT
-"$APP_DIR/Contents/MacOS/ActivityRegression"
+"$APP_DIR/Contents/MacOS/ActivityRegression" "$@"

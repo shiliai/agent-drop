@@ -2,6 +2,47 @@ import XCTest
 @testable import AgentDropCore
 
 final class TransferProgressTests: XCTestCase {
+    func testEmptyFileRsyncProgressOmitsNonFinitePercentage() throws {
+        // macOS /usr/bin/rsync emits this line when transferring an empty file.
+        let progress = try XCTUnwrap(RsyncProgressParser.parse("0 nan% 00:00:00 (xfer#1, to-check=0/1)"))
+        XCTAssertNil(progress.fractionCompleted)
+        XCTAssertEqual(progress.displayText(prefix: "Uploading"), "Uploading - ETA 0s")
+    }
+
+    func testNonFinitePercentagesAreOmitted() {
+        for fraction in [Double.nan, .infinity, -.infinity] {
+            let progress = makeProgress(fraction: fraction)
+            XCTAssertNil(progress.percentText)
+        }
+    }
+
+    func testFinitePercentagesAreClampedBeforeConversion() {
+        for (fraction, expected) in [(-Double.greatestFiniteMagnitude, "0%"), (-0.1, "0%"), (0, "0%"), (0.425, "43%"), (1, "100%"), (1.1, "100%"), (Double.greatestFiniteMagnitude, "100%")] {
+            XCTAssertEqual(makeProgress(fraction: fraction).percentText, expected)
+        }
+    }
+
+    func testInvalidOrUnrepresentableMetricsAreOmitted() {
+        for value in [Double.nan, .infinity, -.infinity, .greatestFiniteMagnitude, Double(Int.max)] {
+            let progress = TransferProgress(completedBytes: 0, fractionCompleted: nil, bytesPerSecond: value.isFinite ? nil : value, estimatedTimeRemaining: value)
+            XCTAssertNil(progress.etaText)
+            XCTAssertNil(progress.speedText)
+        }
+        XCTAssertEqual(TransferProgress(completedBytes: 0, fractionCompleted: nil, bytesPerSecond: nil, estimatedTimeRemaining: -1).etaText, "0s")
+    }
+
+    func testParserRejectsNonFinitePercentageTokens() {
+        for token in ["nan", "inf", "-inf", "1e309"] {
+            let progress = RsyncProgressParser.parse("0 \(token)% 00:00:00")
+            XCTAssertNil(progress?.fractionCompleted)
+            XCTAssertEqual(progress?.etaText, "0s")
+        }
+    }
+
+    private func makeProgress(fraction: Double) -> TransferProgress {
+        TransferProgress(completedBytes: 0, fractionCompleted: fraction, bytesPerSecond: nil, estimatedTimeRemaining: nil)
+    }
+
     func testParsesRsyncProgressLine() {
         let progress = RsyncProgressParser.parse("  1,234,567  42%   12.34MB/s    0:01:23")
 
