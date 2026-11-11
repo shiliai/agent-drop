@@ -2,6 +2,27 @@ import XCTest
 @testable import AgentDropCore
 
 final class RsyncProgressCompatibilityTests: XCTestCase {
+    func testSystemRsyncEmptyFileProgressCanBeDisplayedAndPersisted() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("empty.dat")
+        try Data().write(to: source)
+        let progress = ProgressCapture()
+        let result = try ProcessCommandRunner().run(CommandInvocation(
+            executable: "/usr/bin/rsync",
+            arguments: ["--progress", "-a", source.path, root.appendingPathComponent("copy.dat").path]
+        )) { line in
+            if let parsed = RsyncProgressParser.parse(line) { progress.append(parsed) }
+        }
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertFalse(progress.values.isEmpty, result.stdout)
+        for value in progress.values {
+            XCTAssertFalse(value.displayText(prefix: "Uploading").contains("nan"))
+            XCTAssertNoThrow(try JSONEncoder.agentDropHistory.encode(value))
+        }
+        XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("copy.dat")), Data())
+    }
+
     func testUploadUsesCompatibleProgressOptionAndReportsProgress() throws {
         let runner = try TransferTestTransport()
         let source = try runner.file("source/demo.png", text: String(repeating: "x", count: 128 * 1024))

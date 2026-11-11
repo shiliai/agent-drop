@@ -146,9 +146,24 @@ public final class TransferQueue {
             && !retryingIDs.contains(entry.id)
     }
 
+    /// History may belong to another process. Recovery requires an explicit user
+    /// confirmation that the original transfer has stopped; never recover automatically.
+    public func canRecover(_ entry: UploadHistoryEntry) -> Bool {
+        entry.status == .running
+            && !entries.contains { $0.id == entry.id }
+            && !retryingIDs.contains(entry.id)
+    }
+
     @discardableResult
-    public func retry(_ entry: UploadHistoryEntry) -> UUID? {
-        guard canRetry(entry), let request = entry.resolvedRetryRequest else { return nil }
+    public func retry(_ entry: UploadHistoryEntry, recoveringInterrupted: Bool = false) -> UUID? {
+        let eligible = recoveringInterrupted ? canRecover(entry) : canRetry(entry)
+        guard eligible, let request = entry.resolvedRetryRequest else { return nil }
+        if recoveringInterrupted {
+            let interrupted = entry.withStatus(.cancelled, errorMessage: "Previous transfer interrupted. Resumed in a new attempt.")
+                .withMetrics(startedAt: entry.startedAt, completedAt: Date(), totalBytes: entry.totalBytes, transferredBytes: entry.transferredBytes)
+            entries.insert(interrupted, at: 0)
+            persist(interrupted)
+        }
         retryingIDs.insert(entry.id)
         let id = enqueue([request])[0]
         retryOrigins[id] = entry.id

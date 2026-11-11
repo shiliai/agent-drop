@@ -222,7 +222,7 @@ struct TransferActivityRow: View {
                 }
                 .help(isQueued ? "Cancel queued transfer" : "Stop transfer")
                 .accessibilityLabel(isQueued ? "Cancel queued transfer" : "Stop transfer")
-            } else if entry.status == .failed || entry.status == .cancelled {
+            } else if entry.status == .failed || entry.status == .cancelled || queue.canRecover(entry) {
                 RetryTransferButton(entry: entry, queue: queue)
                     .labelStyle(.iconOnly)
             } else if let payload = entry.copyPayload {
@@ -436,24 +436,38 @@ struct RetryTransferButton: View {
     let queue: TransferQueue
     @State private var selectionError: String?
     @State private var isShowingError = false
+    @State private var isConfirmingRecovery = false
+
+    private var isRecovery: Bool { queue.canRecover(entry) }
 
     private var needsFileSelection: Bool {
-        (entry.status == .failed || entry.status == .cancelled)
-            && entry.direction == .upload
+        entry.direction == .upload
             && entry.resolvedRetryRequest == nil
     }
 
     var body: some View {
         Button {
-            if needsFileSelection { selectFilesForRetry() } else { queue.retry(entry) }
+            if isRecovery { isConfirmingRecovery = true } else { submitRetry() }
         } label: {
-            Label(queue.retryingIDs.contains(entry.id) ? "Retrying" : (needsFileSelection ? "Retry..." : "Retry"), systemImage: "arrow.clockwise")
+            Label(queue.retryingIDs.contains(entry.id) ? "Retrying" : (isRecovery ? "Resume..." : (needsFileSelection ? "Retry..." : "Retry")), systemImage: "arrow.clockwise")
         }
-        .disabled(!needsFileSelection && !queue.canRetry(entry))
-        .help(needsFileSelection ? "Select the original files to retry upload to \(entry.targetName)" : "Retry using the original host and source paths")
+        .disabled(queue.retryingIDs.contains(entry.id) || (!needsFileSelection && !queue.canRetry(entry) && !isRecovery))
+        .accessibilityLabel(isRecovery ? "Resume interrupted transfer" : "Retry transfer")
+        .help(isRecovery ? "Resume an interrupted transfer using the original host and paths" : (needsFileSelection ? "Select the original files to retry upload to \(entry.targetName)" : "Retry using the original host and source paths"))
+        .alert("Resume interrupted transfer?", isPresented: $isConfirmingRecovery) {
+            Button("Cancel", role: .cancel) {}
+            Button("Resume") { submitRetry() }
+        } message: {
+            Text("Confirm the original transfer has stopped, including any Finder transfer. This starts a new attempt using retained partial files where available. Already completed files are checked before being skipped.")
+        }
         .alert("Could not retry transfer", isPresented: $isShowingError) {
             Button("OK", role: .cancel) {}
         } message: { Text(selectionError ?? "No supported files selected.") }
+    }
+
+    private func submitRetry() {
+        if needsFileSelection { selectFilesForRetry() }
+        else { queue.retry(entry, recoveringInterrupted: isRecovery) }
     }
 
     private func selectFilesForRetry() {
@@ -471,11 +485,12 @@ struct RetryTransferButton: View {
             return
         }
         let target = SSHTarget(name: entry.targetName, source: .config)
-        queue.enqueue(selection.files.map { file in
-            .upload(target: target, sources: [UploadSourceFile(
+        let sources = selection.files.map { file in
+            UploadSourceFile(
                 sourceURL: file, remoteName: file.lastPathComponent,
                 isDirectory: (try? file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-            )])
-        })
+            )
+        }
+        queue.retry(entry.withRetryRequest(.upload(target: target, sources: sources)), recoveringInterrupted: isRecovery)
     }
 }

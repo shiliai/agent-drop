@@ -21,18 +21,19 @@ public struct TransferProgress: Codable, Equatable, Sendable {
     }
 
     public var percentText: String? {
-        guard let fractionCompleted else { return nil }
-        return "\(Int((fractionCompleted * 100).rounded()))%"
+        guard let fractionCompleted, fractionCompleted.isFinite else { return nil }
+        let boundedFraction = min(max(fractionCompleted, 0), 1)
+        return "\(Int((boundedFraction * 100).rounded()))%"
     }
 
     public var speedText: String? {
-        guard let bytesPerSecond, bytesPerSecond > 0 else { return nil }
+        guard let bytesPerSecond, bytesPerSecond.isFinite, bytesPerSecond > 0 else { return nil }
         return "\(Self.formatBytes(bytesPerSecond))/s"
     }
 
     public var etaText: String? {
         guard let estimatedTimeRemaining, estimatedTimeRemaining.isFinite else { return nil }
-        let totalSeconds = max(0, Int(estimatedTimeRemaining.rounded()))
+        guard let totalSeconds = Int(exactly: max(0, estimatedTimeRemaining.rounded())) else { return nil }
         let hours = totalSeconds / 3600
         let minutes = (totalSeconds % 3600) / 60
         let seconds = totalSeconds % 60
@@ -83,7 +84,8 @@ public enum RsyncProgressParser {
 
         let percent = fields.first(where: { $0.hasSuffix("%") })
             .flatMap { Double($0.dropLast()) }
-            .map { min(max($0 / 100, 0), 1) }
+            // macOS rsync reports nan% for empty files. Treat it as unknown progress.
+            .flatMap { $0.isFinite ? min(max($0 / 100, 0), 1) : nil }
         let speed = fields.first(where: { $0.lowercased().hasSuffix("/s") })
             .flatMap(parseRate)
         let eta = fields.drop(while: { !$0.contains(":") })
@@ -114,7 +116,8 @@ public enum RsyncProgressParser {
         case "g", "gb", "gib": multiplier = unit == "gib" ? 1024 * 1024 * 1024 : 1000 * 1000 * 1000
         default: return nil
         }
-        return number * multiplier
+        let rate = number * multiplier
+        return rate.isFinite ? rate : nil
     }
 
     private static func parseDuration(_ value: String) -> TimeInterval? {
@@ -123,6 +126,7 @@ public enum RsyncProgressParser {
               let hours = Double(components[0]),
               let minutes = Double(components[1]),
               let seconds = Double(components[2]) else { return nil }
-        return hours * 3600 + minutes * 60 + seconds
+        let duration = hours * 3600 + minutes * 60 + seconds
+        return duration.isFinite ? duration : nil
     }
 }

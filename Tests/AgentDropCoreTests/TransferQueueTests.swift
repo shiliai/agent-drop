@@ -3,6 +3,54 @@ import XCTest
 
 final class TransferQueueTests: XCTestCase {
     @MainActor
+    func testConfirmedHistoryRecoveryResumesOriginalRequestAndRetiresOldRecord() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let executor = ControlledExecutor()
+        defer { executor.releaseAll() }
+        let queue = TransferQueue(store: fixture.store, execute: executor.execute, copyPaths: { _ in true })
+        let request = upload("folder with spaces", host: "original-host", isDirectory: true)
+        let original = request.entry(id: UUID(), createdAt: Date(), status: .running)
+        try await fixture.store.upsert(original)
+        XCTAssertTrue(queue.canRecover(original))
+        XCTAssertNil(queue.retry(original), "Unconfirmed history recovery must not start a transfer")
+        let resumedID = try XCTUnwrap(queue.retry(original, recoveringInterrupted: true))
+        XCTAssertFalse(queue.canRecover(original))
+        XCTAssertNil(queue.retry(original, recoveringInterrupted: true))
+        try await eventually { executor.startedCount == 1 }
+        XCTAssertEqual(executor.requests, [request])
+        let merged = queue.mergedEntries(with: [original])
+        XCTAssertEqual(merged.first { $0.id == original.id }?.status, .cancelled)
+        XCTAssertEqual(merged.filter { $0.status == .running }.map(\.id), [resumedID])
+        XCTAssertFalse(queue.canRecover(try XCTUnwrap(queue.entries.first { $0.id == resumedID })))
+        executor.releaseAll()
+        try await eventually { queue.activeCount == 0 }
+        XCTAssertNil(queue.retry(original, recoveringInterrupted: true), "Stale UI snapshots must not recover twice")
+        await queue.waitForPersistence()
+        let saved = try await fixture.store.load()
+        XCTAssertEqual(saved.first { $0.id == original.id }?.status, .cancelled)
+        XCTAssertEqual(saved.first { $0.id == resumedID }?.status, .succeeded)
+    }
+
+    @MainActor
+    func testRecoveryOfLegacyDownloadUsesSavedHostAndRemotePaths() async throws {
+        let fixture = try Fixture()
+        defer { fixture.cleanup() }
+        let queue = TransferQueue(store: fixture.store, execute: { request, _ in ControlledExecutor.result(for: request) }, copyPaths: { _ in true })
+        let original = UploadHistoryEntry(targetName: "original-host", status: .running,
+            localFileNames: ["report.txt"], remoteDisplayPaths: ["~/report.txt"], errorMessage: nil)
+        XCTAssertTrue(queue.canRecover(original))
+        XCTAssertNil(queue.retry(original, recoveringInterrupted: true), "Never guess missing upload source paths")
+        let download = UploadHistoryEntry(direction: .download, targetName: "original-host", status: .running,
+            localFileNames: ["report.txt"], remoteDisplayPaths: ["~/report.txt"], errorMessage: nil)
+        let id = try XCTUnwrap(queue.retry(download, recoveringInterrupted: true))
+        XCTAssertEqual(queue.entries.first { $0.id == id }?.retryRequest, .download(
+            target: SSHTarget(name: "original-host", source: .config), paths: [RemotePath(hostHint: nil, path: "~/report.txt")]))
+        try await eventually { queue.activeCount == 0 }
+        await queue.waitForPersistence()
+    }
+
+    @MainActor
     func testSkippedTransferPersistsZeroTransferredBytesAndCopyablePath() async throws {
         let fixture = try Fixture()
         defer { fixture.cleanup() }
